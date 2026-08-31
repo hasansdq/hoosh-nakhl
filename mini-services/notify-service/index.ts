@@ -19,6 +19,9 @@
  */
 
 import { createServer, type IncomingMessage, type ServerResponse } from "http";
+import { spawn } from "node:child_process";
+import { open as openFile, readFile, writeFile } from "node:fs/promises";
+import { connect } from "node:net";
 import { Server, type Socket } from "socket.io";
 
 const PORT = 3003; // hardcoded — the Caddy gateway expects this port
@@ -217,3 +220,90 @@ function shutdown(signal: string) {
 
 process.on("SIGTERM", () => shutdown("SIGTERM"));
 process.on("SIGINT", () => shutdown("SIGINT"));
+
+// ---- Next.js dev-server supervisor ---------------------------------------
+// The sandbox harness reaps every background process that was spawned from the
+// agent's shell session as soon as that tool call ends — but processes that are
+// parented by THIS platform-owned service are left alone. So this service also
+// acts as the supervisor that keeps the Next.js dev server (port 3000) alive:
+//   • on every (re)start of this file — including `bun --hot` reloads — we make
+//     sure `next dev` is running, and
+//   • every 30 s we self-heal if it ever dies.
+// The child is spawned fully detached (its own session + process group, unref'd)
+// with stdio wired to dev.log, so it survives even restarts of this service and
+// behaves exactly like the platform's original `next dev -p 3000 2>&1 | tee dev.log`.
+const DEV_PORT = 3000;
+const PROJECT_ROOT = "/home/z/my-project";
+const DEV_LOG_PATH = `${PROJECT_ROOT}/dev.log`;
+const SPAWN_LOCK_PATH = "/tmp/nakhl-next-dev.lock";
+const SUPERVISE_INTERVAL_MS = 30_000;
+
+function tcpPortOpen(port: number, host = "127.0.0.1"): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = connect({ port, host, timeout: 1_000 }, () => {
+      socket.destroy();
+      resolve(true);
+    });
+    socket.on("error", () => resolve(false));
+    socket.on("timeout", () => {
+      socket.destroy();
+      resolve(false);
+    });
+  });
+}
+
+async function isPidAlive(pid: number): Promise<boolean> {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function ensureNextDev(): Promise<void> {
+  if (await tcpPortOpen(DEV_PORT)) return; // already serving requests
+
+  // Another spawn may be booting right now (e.g. during a hot reload) — the
+  // lock avoids double-spawning two competing `next dev` processes.
+  let lockedPid = 0;
+  try {
+    lockedPid = Number.parseInt((await readFile(SPAWN_LOCK_PATH, "utf8")).trim(), 10);
+  } catch {
+    // no lock file yet — that's fine, we're first
+  }
+  if (Number.isFinite(lockedPid) && lockedPid > 0 && (await isPidAlive(lockedPid))) {
+    console.log(`[supervisor] next dev already booting (pid ${lockedPid})`);
+    return;
+  }
+
+  console.log(`[supervisor] port ${DEV_PORT} is down — spawning next dev…`);
+  let logFd: number | "ignore" = "ignore";
+  try {
+    const logFile = await openFile(DEV_LOG_PATH, "a");
+    logFd = logFile.fd;
+  } catch {
+    // fall back to /dev/null — losing dev.log is annoying but not fatal
+  }
+  const child = spawn(
+    "node",
+    [`${PROJECT_ROOT}/node_modules/next/dist/bin/next`, "dev", "-p", String(DEV_PORT)],
+    {
+      cwd: PROJECT_ROOT,
+      detached: true, // own session + group: outlives this service & reapers
+      stdio: ["ignore", logFd, logFd],
+      env: process.env,
+    },
+  );
+  child.unref();
+  try {
+    await writeFile(SPAWN_LOCK_PATH, `${child.pid}\n`, "utf8");
+  } catch {
+    // best-effort lock
+  }
+  console.log(`[supervisor] spawned next dev (pid ${child.pid})`);
+}
+
+// run once on every (re)start, then keep watching forever
+void ensureNextDev();
+setInterval(() => void ensureNextDev(), SUPERVISE_INTERVAL_MS);
