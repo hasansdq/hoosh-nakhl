@@ -1,0 +1,332 @@
+// Nakhl Restaurant - Rafsanjan | رستوران نخل رفسنجان
+// Professional modular schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ============ Users & Auth ============
+
+model User {
+  id          String    @id @default(cuid())
+  phone       String    @unique // normalized: 98XXXXXXXXXX
+  firstName   String?
+  lastName    String?
+  nationalId  String?
+  email       String?
+  birthDate   DateTime?
+  gender      String? // MALE | FEMALE | OTHER
+  avatarUrl   String?
+  dietaryPrefs String? /// JSON: { vegetarian, avoidSpicy, allergies, dislikes } — ترجیحات غذایی برای هوش نخل
+  role        String    @default("USER") // USER | ADMIN
+  status      String    @default("ACTIVE") // ACTIVE | BLOCKED
+  note        String? // admin note about user
+  lastLoginAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  addresses    Address[]
+  orders       Order[]
+  chatSessions ChatSession[]
+  sessions     Session[]
+  reviews      Review[]
+  favorites    Favorite[]
+}
+
+model Address {
+  id          String  @id @default(cuid())
+  userId      String
+  user        User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title       String
+  fullAddress String
+  postalCode  String?
+  isDefault   Boolean @default(false)
+  createdAt   DateTime @default(now())
+
+  @@index([userId])
+}
+
+model OtpCode {
+  id         String    @id @default(cuid())
+  phone      String
+  codeHash   String
+  purpose    String // LOGIN | REGISTER
+  attempts   Int       @default(0)
+  expiresAt  DateTime
+  consumedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([phone, createdAt])
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token     String   @unique
+  ip        String?
+  userAgent String?
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+// ============ Menu ============
+
+model Category {
+  id        String     @id @default(cuid())
+  name      String
+  slug      String     @unique
+  icon      String? // lucide icon key
+  sortOrder Int        @default(0)
+  isActive  Boolean    @default(true)
+  items     MenuItem[]
+}
+
+model MenuItem {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  price       Int // Toman
+  categoryId  String
+  category    Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  imageUrl    String?
+  gallery     Json? /// «تصاویر گالری (آرایه JSON از URLها)»
+  isAvailable Boolean  @default(true)
+  isSpecial   Boolean  @default(false) // پیشنهاد ویژه
+  isDrink     Boolean  @default(false)
+  isVegetarian Boolean @default(false) /// گیاهی
+  isSpicy     Boolean  @default(false) /// تند
+  calories    Int?
+  prepTime    Int? // minutes
+  ingredients String?
+  sortOrder   Int      @default(0)
+  orderCount  Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  orderItems OrderItem[]
+  reviews    Review[]
+  favorites  Favorite[]
+
+  @@index([categoryId, isAvailable])
+}
+
+// ============ Favorites (علاقه‌مندی‌های کاربر) ============
+
+model Favorite {
+  id          String   @id @default(cuid())
+  userId      String
+  menuItemId  String
+  createdAt   DateTime @default(now())
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  menuItem    MenuItem  @relation(fields: [menuItemId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, menuItemId])
+  @@index([userId])
+}
+
+// ============ Orders ============
+
+model Order {
+  id              String   @id @default(cuid())
+  orderNumber     String   @unique // NK-XXXXXX
+  userId          String
+  user            User     @relation(fields: [userId], references: [id])
+  type            String // DELIVERY | PICKUP
+  status          String // PENDING_PAYMENT | PAID | PREPARING | READY | DELIVERING | DELIVERED | CANCELED | PAYMENT_FAILED
+  address         String?
+  note            String?
+  scheduledFor    DateTime? /// زمان تحویل پیش‌سفارش
+  subtotal        Int
+  deliveryFee     Int      @default(0)
+  taxRate         Float    @default(0.1)
+  taxAmount       Int      @default(0)
+  discount        Int      @default(0)
+  couponCode      String?
+  coupon          Coupon?  @relation(fields: [couponCode], references: [code], onDelete: SetNull)
+  total           Int
+  paymentStatus   String   @default("PENDING") // PENDING | PAID | FAILED
+  paymentAuthority String?
+  paymentRef      String? // zarinpal ref_id
+  paymentCard     String?
+  paymentError    String?
+  paidAt          DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  items      OrderItem[]
+  statusLogs OrderStatusLog[]
+  reviews    Review[]
+
+  @@index([userId, createdAt])
+  @@index([status])
+  @@index([paymentAuthority])
+}
+
+model OrderItem {
+  id         String    @id @default(cuid())
+  orderId    String
+  order      Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  menuItemId String?
+  menuItem   MenuItem? @relation(fields: [menuItemId], references: [id], onDelete: SetNull)
+  name       String // snapshot
+  unitPrice  Int // snapshot
+  quantity   Int
+  lineTotal  Int
+
+  @@index([orderId])
+}
+
+model OrderStatusLog {
+  id        String   @id @default(cuid())
+  orderId   String
+  order     Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  status    String
+  note      String?
+  createdAt DateTime @default(now())
+
+  @@index([orderId])
+}
+
+// ============ AI Chat ============
+
+model ChatSession {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  status    String   @default("ACTIVE") // ACTIVE | ENDED
+  stage     String   @default("GREETING")
+  draft     String? // JSON draft order state
+  orderId   String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  messages ChatMessage[]
+
+  @@index([userId, updatedAt])
+}
+
+model ChatMessage {
+  id        String   @id @default(cuid())
+  sessionId String
+  session   ChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  role      String // USER | ASSISTANT
+  content   String
+  type      String   @default("TEXT") // TEXT | MENU | ORDER_SUMMARY | ERROR
+  metadata  String? // JSON payload for rich rendering
+  createdAt DateTime @default(now())
+
+  @@index([sessionId, createdAt])
+}
+
+// ============ Coupons (کد تخفیف) ============
+
+model Coupon {
+  id          String    @id @default(cuid())
+  code        String    @unique // e.g. NAKHL20
+  title       String // نمایشی: «تخفیف افتتاحیه»
+  type        String // PERCENT | FIXED
+  value       Int // درصد یا مبلغ تومان
+  minOrder    Int       @default(0) // حداقل مبلغ سبد (تومان)
+  maxDiscount Int? // سقف تخفیف برای PERCENT
+  usageLimit  Int       @default(0) // 0 = نامحدود
+  usedCount   Int       @default(0)
+  perUserLimit Int      @default(1) // حداکثر استفاده هر کاربر
+  startsAt    DateTime?
+  expiresAt   DateTime?
+  isActive    Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  orders Order[]
+
+  @@index([isActive, expiresAt])
+}
+
+// ============ Reviews (امتیاز و نظر) ============
+
+model Review {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  orderId    String?
+  order      Order?   @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  menuItemId String
+  menuItem   MenuItem @relation(fields: [menuItemId], references: [id], onDelete: Cascade)
+  rating     Int // 1..5
+  comment    String?
+  status     String   @default("PENDING") // PENDING | APPROVED | REJECTED
+  createdAt  DateTime @default(now())
+
+  @@unique([userId, menuItemId])
+  @@index([menuItemId, status])
+  @@index([status, createdAt])
+}
+
+// ============ Settings & Admin ============
+
+model Setting {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  value     String // JSON
+  group     String // ai | sms | payment | general
+  updatedAt DateTime @updatedAt
+}
+
+model AdminUser {
+  id             String    @id @default(cuid())
+  username       String    @unique
+  passwordHash   String
+  displayName    String
+  lastLoginAt    DateTime?
+  failedAttempts Int       @default(0)
+  lockedUntil    DateTime?
+  createdAt      DateTime  @default(now())
+  sessions       AdminSession[]
+}
+
+model AdminSession {
+  id        String   @id @default(cuid())
+  token     String   @unique
+  adminId   String
+  admin     AdminUser @relation(fields: [adminId], references: [id], onDelete: Cascade)
+  ip        String?
+  userAgent String?
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([expiresAt])
+}
+
+model Upload {
+  id         String   @id @default(cuid())
+  filename   String
+  url        String
+  mimeType   String
+  size       Int
+  uploadedBy String? // userId or "admin"
+  createdAt  DateTime @default(now())
+
+  @@index([createdAt])
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  actor     String
+  action    String
+  entity    String?
+  entityId  String?
+  detail    String? // JSON
+  ip        String?
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+}

@@ -1,0 +1,12 @@
+{
+  "name": "notify-service",
+  "version": "1.0.0",
+  "dependencies": {
+    "socket.io": "^4.8.1"
+  },
+  "description": "Real-time WebSocket push notification service for Nakhl admin panel (socket.io on :3003 + HTTP /emit endpoint)",
+  "private": true,
+  "scripts": {
+    "dev": "bun --hot index.ts"
+  }
+}
