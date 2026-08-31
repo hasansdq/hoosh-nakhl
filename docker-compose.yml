@@ -1,0 +1,82 @@
+# =============================================================================
+# Nakhl Restaurant — docker-compose (production stack)
+# -----------------------------------------------------------------------------
+#   web     → Next.js standalone server     (:3000, internal)
+#   notify  → socket.io realtime service    (:3003, internal — proxied as /rt)
+#   caddy   → reverse proxy + automatic HTTPS (Let's Encrypt)
+#
+# Quick start:
+#   cp .env.example .env      # fill DOMAIN, AUTH_SECRET, ADMIN_NOTIFY_KEY, ADMIN_PASSWORD
+#   docker compose up -d --build
+#   curl https://YOUR-DOMAIN/api/health
+#
+# Local trial without a domain (plain HTTP on port 8080):
+#   DOMAIN=http://localhost:8080 docker compose up -d --build
+#   (the value http://… makes Caddy skip automatic HTTPS)
+# =============================================================================
+services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        # baked into the client bundle at build time — must match Caddyfile.prod
+        NEXT_PUBLIC_SOCKET_PATH: /rt
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: file:/app/db/custom.db
+      # server→notify push (docker network service name)
+      NAKHL_NOTIFY_URL: http://notify:3003/emit
+      # supervisor is sandbox-only; process manager owns restarts here
+      NAKHL_SUPERVISE_DEV: "0"
+      # hard kill-switch for the simulated payment gateway — real ZarinPal only
+      ZARINPAL_FORCE_REAL: "1"
+      # admin bootstrap (used once, on first-boot seeding only)
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-rayantech}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?set ADMIN_PASSWORD in .env}
+      AUTH_SECRET: ${AUTH_SECRET:?set AUTH_SECRET in .env}
+      ADMIN_NOTIFY_KEY: ${ADMIN_NOTIFY_KEY:?set ADMIN_NOTIFY_KEY in .env}
+      PORT: "3000"
+      HOSTNAME: 0.0.0.0
+    volumes:
+      - db_data:/app/db              # SQLite database (survives upgrades)
+      - uploads_data:/app/public/uploads  # runtime-uploaded images (survives upgrades)
+    depends_on:
+      notify:
+        condition: service_healthy
+
+  notify:
+    build:
+      context: .
+      dockerfile: mini-services/notify-service/Dockerfile
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      NAKHL_SUPERVISE_DEV: "0"
+      ADMIN_NOTIFY_KEY: ${ADMIN_NOTIFY_KEY:?set ADMIN_NOTIFY_KEY in .env}
+    # internal only — Caddy proxies /rt → notify:3003; never expose publicly
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      # e.g. nakhl.example.com — or http://localhost:8080 for a local trial
+      DOMAIN: ${DOMAIN:?set DOMAIN in .env}
+    volumes:
+      - ./Caddyfile.prod:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data           # TLS certificates (Let's Encrypt)
+      - caddy_config:/config
+    depends_on:
+      web:
+        condition: service_healthy
+
+volumes:
+  db_data:
+  uploads_data:
+  caddy_data:
+  caddy_config:

@@ -60,10 +60,17 @@ export async function POST(req: NextRequest) {
 
     await logAudit("system", "OTP_SENT", { detail: { phone: `***${phone.slice(-4)}`, provider: smsResult.provider }, ip });
 
+    // PRODUCTION SAFETY: the OTP code is only ever exposed in the API response
+    // while running in development (sandbox QA flow). In production the code is
+    // only delivered via SMS — unless explicitly re-enabled for a staged test
+    // with NAKHL_EXPOSE_DEV_CODE=1.
+    const exposeDevCode =
+      process.env.NODE_ENV !== "production" || process.env.NAKHL_EXPOSE_DEV_CODE === "1";
+
     return ok({
       purpose,
       ttlMinutes: ttl,
-      devCode: smsResult.devMode ? code : undefined, // only in dev mode
+      devCode: smsResult.devMode && exposeDevCode ? code : undefined, // only in dev mode
     });
   } catch (e) {
     console.error("send-otp error:", e);

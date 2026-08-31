@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useMemo } from "react";
 import type { Socket } from "socket.io-client";
+import { connectRealtime } from "@/lib/realtime";
 import { useAppStore } from "@/lib/store";
 import { api } from "@/lib/client-api";
 import { Badge } from "@/components/ui/badge";
@@ -267,7 +268,9 @@ export function OrdersView() {
   };
 
   useEffect(() => {
-    if (user) load();
+    // initial (and user-change) load — deferred through the existing scheduler
+    // so no state is set synchronously inside the effect (cascading-render rule)
+    if (user) scheduleReload(0);
   }, [user]);
 
   // live socket: connect once on mount, listen for "customer:order-status"
@@ -278,15 +281,10 @@ export function OrdersView() {
     let active = true;
 
     const connect = async () => {
-      const { io } = await import("socket.io-client");
+      // connectRealtime: sandbox gateway (XTransformPort) or production path /rt
+      const s = await connectRealtime();
       if (!active) return;
 
-      const s = io("/?XTransformPort=3003", {
-        transports: ["websocket", "polling"],
-        reconnection: true,
-        reconnectionAttempts: Infinity,
-        reconnectionDelay: 2000,
-      });
       socketRef.current = s;
 
       s.on("connect", () => {

@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import type { Socket } from "socket.io-client";
+import { connectRealtime } from "@/lib/realtime";
 import { useAdminStore, type AdminTab } from "@/lib/admin-store";
 import { api } from "@/lib/client-api";
 import { toPersianDigits, formatToman } from "@/lib/fa";
@@ -175,9 +176,11 @@ export function AdminPanel() {
     setTab(tabForSel);
   };
 
-  // self-healing: state drives re-render, ref proves the socket is really connected
-  // (avoids a stale "connected" pill after logout → re-login)
-  const liveConnected = socketConnected && (socketRef.current?.connected ?? false);
+  // socket connect/disconnect events keep `socketConnected` in sync — the
+  // manual disconnect() on cleanup also fires the "disconnect" handler, so the
+  // live pill can never go stale after logout → re-login.
+  // (derived from pure state — no ref reads during render)
+  const liveConnected = socketConnected;
   const pollIntervalMs = liveConnected ? 60_000 : 30_000;
 
   // live stats polling — fallback channel (every 30s; relaxed to 60s while the
@@ -224,16 +227,10 @@ export function AdminPanel() {
       // fetch the shared key (admin-only endpoint), then join the notify room
       const res = await api<{ key: string }>("/api/admin/notify-key");
       if (!active || !res.success || !res.key) return;
-      // dynamic import keeps socket.io-client fully client-side (no SSR)
-      const { io } = await import("socket.io-client");
+      // connectRealtime lazily imports socket.io-client (fully client-side, no SSR)
+      const s = await connectRealtime();
       if (!active) return;
 
-      const s = io("/?XTransformPort=3003", {
-        transports: ["websocket", "polling"],
-        reconnection: true,
-        reconnectionAttempts: Infinity,
-        reconnectionDelay: 2000,
-      });
       socketRef.current = s;
       // set when the server rejects our key — stops the manual reconnect below
       // from looping forever on a misconfigured shared secret

@@ -232,8 +232,19 @@ process.on("SIGINT", () => shutdown("SIGINT"));
 // The child is spawned fully detached (its own session + process group, unref'd)
 // with stdio wired to dev.log, so it survives even restarts of this service and
 // behaves exactly like the platform's original `next dev -p 3000 2>&1 | tee dev.log`.
-const DEV_PORT = 3000;
-const PROJECT_ROOT = "/home/z/my-project";
+//
+// PRODUCTION SAFETY: this supervisor is a sandbox-only helper. It is disabled
+// automatically when NODE_ENV=production (Docker/standalone deploys set it) and
+// can also be forced on/off explicitly with NAKHL_SUPERVISE_DEV=1 / 0. In
+// production the process manager (Docker / systemd / PM2) owns restarts instead
+// — a supervisor that spawns `next dev` must NEVER run in production.
+const SUPERVISE_ENABLED = (() => {
+  if (process.env.NAKHL_SUPERVISE_DEV === "1") return true; // force on (sandbox)
+  if (process.env.NAKHL_SUPERVISE_DEV === "0") return false; // force off
+  return process.env.NODE_ENV !== "production"; // default: dev on, prod off
+})();
+const DEV_PORT = Number(process.env.NAKHL_DEV_PORT ?? 3000);
+const PROJECT_ROOT = process.env.NAKHL_PROJECT_ROOT ?? "/home/z/my-project";
 const DEV_LOG_PATH = `${PROJECT_ROOT}/dev.log`;
 const SPAWN_LOCK_PATH = "/tmp/nakhl-next-dev.lock";
 const SUPERVISE_INTERVAL_MS = 30_000;
@@ -304,6 +315,10 @@ async function ensureNextDev(): Promise<void> {
   console.log(`[supervisor] spawned next dev (pid ${child.pid})`);
 }
 
-// run once on every (re)start, then keep watching forever
-void ensureNextDev();
-setInterval(() => void ensureNextDev(), SUPERVISE_INTERVAL_MS);
+// run once on every (re)start, then keep watching forever — sandbox only
+if (SUPERVISE_ENABLED) {
+  void ensureNextDev();
+  setInterval(() => void ensureNextDev(), SUPERVISE_INTERVAL_MS);
+} else {
+  console.log("[supervisor] disabled (production mode) — process manager owns restarts");
+}

@@ -13,7 +13,9 @@ import "server-only";
  * bad payload) is swallowed — the main HTTP request flow never breaks.
  */
 
-const NOTIFY_EMIT_URL = "http://localhost:3003/emit";
+// Where the notify-service listens. Default: same host (sandbox / VPS with
+// systemd). In Docker Compose set NAKHL_NOTIFY_URL=http://notify:3003/emit.
+const NOTIFY_EMIT_URL = process.env.NAKHL_NOTIFY_URL ?? "http://localhost:3003/emit";
 const NOTIFY_KEY = process.env.ADMIN_NOTIFY_KEY ?? "nakhl-notify-2024";
 
 export async function notifyAdmins(event: string, payload: Record<string, unknown>): Promise<void> {

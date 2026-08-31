@@ -48,7 +48,12 @@ export async function zarinpalRequest(
     orderId: string;
   }
 ): Promise<RequestResult> {
-  const useSimulation = settings.simulationMode || !settings.merchantId;
+  // PRODUCTION SAFETY: ZARINPAL_FORCE_REAL=1 acts as a hard kill-switch for the
+  // simulated gateway — payments then either go through the REAL ZarinPal API
+  // (merchantId must be configured) or fail loudly. Never silently "simulate
+  // success" in production because a setting was left flipped.
+  const forceReal = process.env.ZARINPAL_FORCE_REAL === "1";
+  const useSimulation = !forceReal && (settings.simulationMode || !settings.merchantId);
 
   if (useSimulation) {
     const authority = `SIM-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 10).toUpperCase()}`;

@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import type { Socket } from "socket.io-client";
+import { connectRealtime } from "@/lib/realtime";
 import { useAppStore } from "@/lib/store";
 import { api } from "@/lib/client-api";
 import { Button } from "@/components/ui/button";
@@ -180,15 +181,10 @@ export function TrackView() {
     let keyRejected = false;
 
     const connect = async () => {
-      const { io } = await import("socket.io-client");
+      // connectRealtime: sandbox gateway (XTransformPort) or production path /rt
+      const s = await connectRealtime();
       if (!active) return;
 
-      const s = io("/?XTransformPort=3003", {
-        transports: ["websocket", "polling"],
-        reconnection: true,
-        reconnectionAttempts: Infinity,
-        reconnectionDelay: 2000,
-      });
       socketRef.current = s;
       setLive("connecting");
 
