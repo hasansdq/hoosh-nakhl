@@ -258,7 +258,7 @@ export function SiteHeader() {
           <ThemeToggle />
 
           {user ? (
-            <DropdownMenu dir="rtl">
+            <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <button
                   className="flex items-center gap-2 rounded-full border bg-card p-1 pl-2.5 shadow-sm transition hover:shadow-md active:scale-95 sm:pl-3"
@@ -305,7 +305,7 @@ export function SiteHeader() {
             </Button>
           )}
 
-          <Sheet dir="rtl" open={mobileOpen} onOpenChange={setMobileOpen}>
+          <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
             <SheetTrigger asChild>
               <Button variant="outline" size="icon" className="rounded-xl md:hidden" aria-label="منوی موبایل">
                 <MenuIcon className="h-5 w-5" />

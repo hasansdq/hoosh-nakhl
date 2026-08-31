@@ -9,9 +9,15 @@ import { Button } from "@/components/ui/button";
  * shows an offline banner when the network drops, and surfaces
  * a PWA install prompt when the browser fires beforeinstallprompt.
  */
+/** Browser beforeinstallprompt event (not part of the DOM lib types). */
+interface BeforeInstallPromptEvent extends Event {
+  prompt(): Promise<void>;
+  userChoice: Promise<{ outcome: "accepted" | "dismissed"; platform: string }>;
+}
+
 export function PwaManager() {
   const [offline, setOffline] = useState(false);
-  const [installEvt, setInstallEvt] = useState(null);
+  const [installEvt, setInstallEvt] = useState<BeforeInstallPromptEvent | null>(null);
   const [installDismissed, setInstallDismissed] = useState(false);
 
   // register the service worker
@@ -37,9 +43,9 @@ export function PwaManager() {
 
   // PWA install prompt
   useEffect(() => {
-    const handler = (e) => {
+    const handler = (e: Event) => {
       e.preventDefault();
-      setInstallEvt(e);
+      setInstallEvt(e as BeforeInstallPromptEvent);
     };
     window.addEventListener("beforeinstallprompt", handler);
     return () => window.removeEventListener("beforeinstallprompt", handler);

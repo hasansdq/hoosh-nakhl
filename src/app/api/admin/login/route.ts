@@ -53,7 +53,13 @@ export async function POST(req: NextRequest) {
     await createAdminSession(admin.id, ip, req.headers.get("user-agent") ?? undefined);
     await logAudit(admin.username, "ADMIN_LOGIN_SUCCESS", { ip });
 
-    return ok({ admin: { username: admin.username, displayName: admin.displayName } });
+    return ok({
+      admin: {
+        username: admin.username,
+        displayName: admin.displayName,
+        lastLoginAt: new Date().toISOString(),
+      },
+    });
   } catch (e) {
     console.error("admin login error:", e);
     return fail("خطای داخلی سرور", 500);

@@ -446,7 +446,7 @@ export function MenuManager({ initialFilter }: { initialFilter?: string } = {}) 
       )}
 
       {/* create/edit dialog */}
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen} dir="rtl">
+      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto rounded-2xl" aria-describedby={undefined}>
           <DialogHeader>
             <DialogTitle>{editing ? `ویرایش «${editing.name}»` : "افزودن آیتم جدید به منو"}</DialogTitle>
@@ -737,7 +737,7 @@ export function MenuManager({ initialFilter }: { initialFilter?: string } = {}) 
       </Dialog>
 
       {/* delete confirm */}
-      <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)} dir="rtl">
+      <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
         <AlertDialogContent className="rounded-2xl">
           <AlertDialogHeader>
             <AlertDialogTitle>حذف «{deleteTarget?.name}»؟</AlertDialogTitle>

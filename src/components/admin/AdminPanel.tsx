@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import type { Socket } from "socket.io-client";
+import type { RealtimeSocket } from "@/lib/realtime";
 import { connectRealtime } from "@/lib/realtime";
 import { useAdminStore, type AdminTab } from "@/lib/admin-store";
 import { api } from "@/lib/client-api";
@@ -121,7 +121,7 @@ export function AdminPanel() {
   const [socketConnected, setSocketConnected] = useState(false);
   const prevNewPaid = useRef(0);
   const firstPoll = useRef(true);
-  const socketRef = useRef<Socket | null>(null);
+  const socketRef = useRef<RealtimeSocket | null>(null);
   // true while the real-time push channel is up → polling becomes fallback-only
   const livePushRef = useRef(false);
   const pollRef = useRef<(() => Promise<void>) | null>(null);

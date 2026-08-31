@@ -1,10 +1,14 @@
 import { NextRequest } from "next/server";
 import { ok, fail, requireAdmin, logAudit } from "@/lib/api";
-import { getSettings, saveSettings, invalidateSettingsCache, maskSecrets } from "@/lib/settings";
+import { getSettings, saveSettings, invalidateSettingsCache, maskSecrets, type SettingsGroup } from "@/lib/settings";
 import { getClientIp } from "@/lib/auth";
 import { z } from "zod";
 
-const VALID_GROUPS = ["ai", "sms", "payment", "general"];
+const VALID_GROUPS = ["ai", "sms", "payment", "general"] as const;
+
+function isSettingsGroup(value: string): value is SettingsGroup {
+  return (VALID_GROUPS as readonly string[]).includes(value);
+}
 
 const groupSchemas: Record<string, z.ZodTypeAny> = {
   ai: z.object({
@@ -73,10 +77,10 @@ export async function GET(req: NextRequest) {
     if (!session) return fail("دسترسی غیرمجاز", 401);
 
     const group = new URL(req.url).searchParams.get("group") ?? "ai";
-    if (!VALID_GROUPS.includes(group)) return fail("گروه تنظیمات نامعتبر است");
+    if (!isSettingsGroup(group)) return fail("گروه تنظیمات نامعتبر است");
 
     const settings = await getSettings(group);
-    return ok({ settings: maskSecrets(settings as Record<string, unknown>) });
+    return ok({ settings: maskSecrets(settings) });
   } catch {
     return fail("خطای داخلی سرور", 500);
   }
@@ -89,7 +93,7 @@ export async function PUT(req: NextRequest) {
 
     const body = (await req.json().catch(() => ({}))) as { group?: string; values?: Record<string, unknown> };
     const group = body.group ?? "";
-    if (!VALID_GROUPS.includes(group)) return fail("گروه تنظیمات نامعتبر است");
+    if (!isSettingsGroup(group)) return fail("گروه تنظیمات نامعتبر است");
     if (!body.values || typeof body.values !== "object") return fail("مقادیر تنظیمات ارسال نشده است");
 
     const parsed = groupSchemas[group].safeParse(body.values);
@@ -113,7 +117,7 @@ export async function PUT(req: NextRequest) {
     });
 
     const fresh = await getSettings(group);
-    return ok({ settings: maskSecrets(fresh as Record<string, unknown>) });
+    return ok({ settings: maskSecrets(fresh) });
   } catch (e) {
     console.error("settings update error:", e);
     return fail("خطای داخلی سرور", 500);

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import type { Socket } from "socket.io-client";
+import type { RealtimeSocket } from "@/lib/realtime";
 import { connectRealtime } from "@/lib/realtime";
 import { useAppStore } from "@/lib/store";
 import { api } from "@/lib/client-api";
@@ -122,7 +122,7 @@ export function TrackView() {
   // live channel state — null = not tracking, "connecting" = socket up but not
   // yet acked, "live" = acked "joined-customer", "disconnected" = socket dropped
   const [live, setLive] = useState<"connecting" | "live" | "disconnected" | null>(null);
-  const socketRef = useRef<Socket | null>(null);
+  const socketRef = useRef<RealtimeSocket | null>(null);
   // snapshot the query at submit time — the user might edit the inputs while the
   // result card is open; the live refetch needs the exact phone they used.
   const queryRef = useRef<{ orderNumber: string; phone: string } | null>(null);

@@ -1,28 +1,47 @@
 import type { NextConfig } from "next";
+import { initOpenNextCloudflareForDev } from "@opennextjs/cloudflare";
 
 /**
  * Nakhl Restaurant — Next.js configuration
- * ----------------------------------------
- * `output: "standalone"` produces a minimal self-contained server at
- * `.next/standalone/server.js` (run with `bun server.js` or `node server.js`,
- * see package.json "start" + docker/entrypoint.sh). This is the deployment
- * artifact for Docker / VPS production builds.
+ * -----------------------------------------
+ * The production target is Cloudflare Workers via @opennextjs/cloudflare
+ * (see wrangler.jsonc + open-next.config.ts):
  *
- * Security headers are applied globally; HSTS is handled by the reverse proxy
- * (Caddy) where TLS terminates — see Caddyfile.prod.
+ *   bun run cf:build   → NEXT_PUBLIC_CF_BUILD=1 opennextjs-cloudflare build
+ *   bun run deploy     → cf:build + wrangler deploy
+ *
+ * `initOpenNextCloudflareForDev()` wires the local `next dev` server to a
+ * real Miniflare instance with the exact wrangler.jsonc bindings (D1, R2,
+ * Durable Objects — state persisted under `.wrangler/state`), so local
+ * development runs the same code path as production.
+ *
+ * Image optimization: on Cloudflare, `_next/image` is intercepted by the
+ * OpenNext worker (Cloudflare Images service — a paid, account-level
+ * feature). This deployment serves originals instead: `unoptimized` is set
+ * for CF builds only, so local dev keeps the sharp-based optimizer. To
+ * enable optimization later, add an `IMAGES` binding and remove this flag.
  */
+// Only initialize the Miniflare-backed Cloudflare context for the dev server
+// (NEXT_PHASE is "phase-production-build" while `next build` runs — spinning
+// up Miniflare there would waste memory and warn about Durable Object
+// classes that only exist in the deployable worker, not the proxy).
+if (process.env.NEXT_PHASE !== "phase-production-build") {
+  initOpenNextCloudflareForDev();
+}
+
+const isCloudflareBuild = process.env.NEXT_PUBLIC_CF_BUILD === "1";
+
 const nextConfig: NextConfig = {
-  output: "standalone",
-  typescript: {
-    // The codebase is large and contains pre-existing strict-mode warnings;
-    // runtime correctness is covered by QA. Do not flip this without a full
-    // type-audit pass.
-    ignoreBuildErrors: true,
-  },
+  // NOTE: no `output: "standalone"` — that was the Node/Docker deployment
+  // path. The Cloudflare Workers build produces its own artifact under
+  // `.open-next/`.
   reactStrictMode: false,
   poweredByHeader: false,
   compress: true,
   productionBrowserSourceMaps: false,
+  images: {
+    unoptimized: isCloudflareBuild,
+  },
   async headers() {
     return [
       {

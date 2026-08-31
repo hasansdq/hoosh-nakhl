@@ -73,7 +73,14 @@ export async function chatCompletion(
   // ---- Built-in ZAI engine ----
   if (settings.provider === "zai") {
     try {
-      const { default: ZAI } = await import("z-ai-web-dev-sdk");
+      // The "zai" engine only exists inside the z.ai sandbox runtime (Node).
+      // A computed module specifier keeps bundlers from embedding this
+      // Node-only SDK into the Cloudflare Workers bundle — on Workers the
+      // import simply fails and we return a provider error below (production
+      // databases seed `openrouter` as the default provider, which is pure
+      // fetch and works everywhere).
+      const moduleId = "z-ai-web-dev-sdk";
+      const { default: ZAI } = await import(/* webpackIgnore: true */ moduleId);
       const zai = await ZAI.create();
       const mapped = messages.map((m) => ({
         role: m.role === "assistant" ? ("assistant" as const) : (m.role as "user" | "system"),

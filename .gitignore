@@ -61,3 +61,9 @@ server.log
 /--full-page
 *.png.bak
 agent-browser-artifacts/
+# Cloudflare Workers (OpenNext) build artifacts + local Miniflare state
+.open-next/
+.wrangler/
+.dev.vars
+# inert native engine binary the prisma generator drops next to the workerd client
+src/generated/prisma/*.so.node

@@ -5,8 +5,6 @@ import { cookies } from "next/headers";
 
 // ============ Crypto helpers ============
 
-const SECRET = process.env.AUTH_SECRET || "nakhl-rafsanjan-secret-key-2024-please-change";
-
 export function sha256(input: string): string {
   return crypto.createHash("sha256").update(input).digest("hex");
 }
@@ -15,10 +13,28 @@ export function randomToken(bytes = 32): string {
   return crypto.randomBytes(bytes).toString("hex");
 }
 
+/**
+ * Uniform random integer in [min, maxExclusive) built on WebCrypto
+ * `getRandomValues` (available in Node AND the Workers runtime — unlike
+ * node:crypto `randomInt`, which is not guaranteed on workerd).
+ * Rejection sampling keeps the distribution uniform.
+ */
+function randomIntUniform(min: number, maxExclusive: number): number {
+  const range = maxExclusive - min;
+  if (range <= 0 || !Number.isSafeInteger(range)) {
+    throw new Error(`invalid random range: [${min}, ${maxExclusive})`);
+  }
+  const maxDraw = 0xffff_ffff - (0xffff_ffff % range) - 1; // largest fully-usable draw
+  const buf = new Uint32Array(1);
+  for (;;) {
+    crypto.getRandomValues(buf);
+    if (buf[0] <= maxDraw) return min + (buf[0] % range);
+  }
+}
+
 export function generateOtpCode(length: number): string {
-  const digits = "0123456789";
   let code = "";
-  for (let i = 0; i < length; i++) code += digits[crypto.randomInt(0, 10)];
+  for (let i = 0; i < length; i++) code += String(randomIntUniform(0, 10));
   return code;
 }
 

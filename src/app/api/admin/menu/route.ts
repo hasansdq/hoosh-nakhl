@@ -3,7 +3,7 @@ import { db } from "@/lib/db";
 import { ok, fail, requireAdmin, logAudit } from "@/lib/api";
 import { menuItemSchema } from "@/lib/validators";
 import { getClientIp } from "@/lib/auth";
-import type { Prisma } from "@prisma/client";
+import { Prisma } from "@/generated/prisma/client";
 
 export async function GET(req: NextRequest) {
   try {
@@ -57,7 +57,7 @@ export async function POST(req: NextRequest) {
     const category = await db.category.findUnique({ where: { id: d.categoryId } });
     if (!category) return fail("دسته‌بندی یافت نشد");
 
-    const gallery =
+    const gallery: string[] | null =
       d.gallery && Array.isArray(d.gallery) && d.gallery.length > 0
         ? d.gallery
         : null;
@@ -69,7 +69,8 @@ export async function POST(req: NextRequest) {
         price: d.price,
         categoryId: d.categoryId,
         imageUrl: d.imageUrl || null,
-        gallery: gallery as unknown as Prisma.JsonValue | undefined,
+        // JSON columns take InputJsonValue or the DbNull sentinel (SQLite/D1)
+        gallery: gallery ?? Prisma.DbNull,
         isAvailable: d.isAvailable ?? true,
         isSpecial: d.isSpecial ?? false,
         isDrink: d.isDrink ?? category.slug === "drinks",

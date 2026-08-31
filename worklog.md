@@ -1011,3 +1011,43 @@ Stage Summary:
 - commit: «production-ready: standalone build kit...» (26 فایل، +1923 خط)
 - نحوه دیپلوی کامل در DEPLOY-FA.md (خلاصهٔ سریع: cp .env.example .env → تنظیم DOMAIN/AUTH_SECRET/ADMIN_NOTIFY_KEY/ADMIN_PASSWORD → docker compose up -d --build → ورود از /nk-admin → تنظیم پیامک/زرین‌پال/OpenRouter از پنل)
 - برای فاز بعد: تست روی VPS واقعی با دامنه؛ migration از db push به prisma migrate برای عملیات بالغ‌تر؛ bump نسخهٔ sw.js در هر دیپلوی (در راهنما ذکر شد)؛ فعال‌سازی NAKHL_EXPOSE_DEV_CODE فقط برای تست موقت
+
+---
+Task ID: cf-1
+Agent: Z.ai Code (main)
+Task: مهاجرت کامل معماری پروژه به Cloudflare Workers (Next.js + D1 + R2 + Durable Objects) با حذف مسیر Node/Docker از پروداکشن
+
+Work Log:
+- نصب @opennextjs/cloudflare@1.20.4 + wrangler@4.127.1 + ارتقای prisma/@prisma/client به 6.19.2 + @prisma/adapter-d1@6.19.3
+- Prisma: جنراتور `prisma-client` با `runtime="workerd"` (کلاینت engineless با کامپایلر WASM) → خروجی src/generated/prisma؛ حذف prisma-client-js
+- D1 migrations: migrations/0001_init.sql از prisma migrate diff (۴۹ دستور) + seed SQL سه‌فایلی (seed-core / settings-dev / settings-prod) با اسکریپت scripts/generate-seed-sql.ts (idempotent، INSERT OR IGNORE، هش scrypt ادمین embed)
+- db.ts جدید: پراکسی lazy که PrismaClient را با PrismaD1(env.DB) می‌سازد (contract قبلی `import { db }` برای ۴۸ فایل حفظ شد)
+- cf.ts جدید: getCloudflareEnv()/cfVar()/isWorkersRuntime() با تایپ‌های ساختاری R2/DO و D1 واقعی (مرز آداپتور پراسما)
+- آپلود → R2: بازنویسی src/lib/uploads (بدون fs/sharp — اعتبارسنجی همان قبلی + R2.put با httpMetadata) + روت سرو /f/[...key] (immutable cache) + نگاشت URL جدید /f/<key>
+- Socket.IO → Durable Object: کلاس NakhlRealtime (src/do/realtime.ts) با همان پروتکل/روم‌ها/کلید/اعتبارسنجی سرویس قبلی + ورودی سفارشی src/worker.js که آپگرید /api/ws را قبل از Next.js به DO می‌برد + روت /api/ws برای 426
+- realtime.ts: اینترفیس RealtimeSocket (on/emit/connect/removeAllListeners/disconnect/connected) با دو ترنسپورت: WebSocket بومی (بیلد CF) و socket.io-client (سندباکس dev) — ۳ کامپوننت فقط تغییر تایپی خوردند
+- notify.ts: emit از طریق binding DO در Workers و HTTP :3003 در dev — با همان امضاهای notifyAdmins/notifyCustomer
+- next.config.ts: حذف output:standalone و typescript.ignoreBuildErrors (!) + images.unoptimized فقط برای بیلد CF + initOpenNextCloudflareForDev گاردشده به dev (NEXT_PHASE) + هدرهای امنیتی حفظ شد
+- wrangler.jsonc: main=src/worker.js، assets، D1(DB)، R2(R2 + NEXT_INC_CACHE_R2_BUCKET)، services self-reference، durable_objects(REALTIME/NakhlRealtime)+migration v1، vars، observability
+- open-next.config.ts با r2IncrementalCache + .dev.vars.example + .env.example بازنویسی Cloudflare
+- auth.ts: حذف SECRET بلااستفاده + جایگزینی crypto.randomInt با randomIntUniform مبتنی بر WebCrypto
+- ai/index.ts: import محاسباتی + webpackIgnore برای z-ai-web-dev-sdk (فقط سندباکس؛ پرود به OpenRouter) — از bundle کارگر خارج ماند
+- package.json: اسکریپت‌های cf:build/cf:dev/deploy/db:migrate:*/db:seed:*/typecheck + build=next build؛ حذف start/db:push/migrate dev/reset/seed قدیمی؛ حذف next-auth/next-intl/uuid/sharp از deps (sharp به devDeps برای dev فقط)
+- حذف کامل کیت Node پروداکشن: Dockerfile، docker-compose، docker/، deploy/، Caddyfile.prod، .dockerignore، DEPLOY-FA.md (جایگزین: CLOUDFLARE-DEPLOY-FA.md) و prisma/seed.ts + attach-images.ts (منسوخ)
+- رفع ۲۴ خطای TS واقعی که ignoreBuildErrors مخفی می‌کرد (تنها ۳ مورد platform-dir با tsconfig exclude): منو (relation connect + Prisma.DbNull)، settings (type guard + مرز generic مستند)، AdminLogin/lastLoginAt، Dialog dir (۴ مورد — runtime no-op بودند)، ItemDetailDialog narrowing، PwaManager BeforeInstallPromptEvent، ResponseInit webSocket، abstract WebSocketPair، D1 structural
+- eslint: ignore های .open-next/.wrangler/src/generated + رفع ۳ هشدار → lint کاملاً پاک
+
+Stage Summary (تأییدهای زنده روی workerd واقعی با wrangler dev + Miniflare):
+- ✅ cf:build موفق (next build با type-check کامل بدون ignoreBuildErrors + باندل OpenNext)
+- ✅ tsc --noEmit: صفر خطا؛ bun run lint: صفر خطا/هشدار
+- ✅ D1 محلی: migrate (۴۹ دستور) + seed → ۷ دسته/۳۰ آیتم/۳ کوپن/۱ ادمین/۴ تنظیمات (باگ سایلنت seed پیدا و رفع شد: updatedAt NOT NULL)
+- ✅ wrangler dev: / ۲۰۰ (فارسی)، /nk-admin ۲۰۰، /api/health db:up، /api/menu کامل (relation include + JSON gallery + booleans)
+- ✅ ورود ادمین روی workerd (scryptSync روی workerd کار می‌کند!) + سشن D1
+- ✅ WS handshake 101 + ادمین-join/کاستومر-join با ack
+- ✅ E2E کامل ۱۰/۱۰: OTP→ثبت‌نام→سبد→سفارش→پرداخت شبیه‌سازی → برواد‌کست «order:new-paid» به WS ادمین از طریق DO
+- ✅ آپلود R2: POST avatar → /f/<uuid>.png → GET ۲۰۰ با Content-Type و immutable cache و magic bytes سالم
+- ✅ سندباکس next dev (:3000) با D1 محلی Miniflare سالم (منو کامل) — dev و prod یک مسیر کد
+- منابعی که کاربر باید بسازد: D1 (nakhl-db) + ۲ باکت R2 + ۲ secret (ADMIN_NOTIFY_KEY, ZARINPAL_FORCE_REAL اختیاری) + جایگزینی database_id در wrangler.jsonc — همه در CLOUDFLARE-DEPLOY-FA.md
+- دستور دیپلوی: bun run db:migrate:remote && bun run db:seed:remote && bun run deploy
+- نکته: هشدار «NakhlRealtime not exported» در خروجی cf:build مربوط به worker داخلی OpenNext است (main واقعی src/worker.js است و کلاس را export می‌کند) — بی‌ضرر و مستند
+- نکته: بهینه‌سازی تصویر (sharp) در مسیر CF حذف رفت (تصاویر اصلی سرو می‌شوند)؛ فعال‌سازی بعدی با binding IMAGES ممکن است

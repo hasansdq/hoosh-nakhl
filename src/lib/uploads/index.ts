@@ -1,11 +1,23 @@
 import "server-only";
 import { db } from "@/lib/db";
-import sharp from "sharp";
-import { randomUUID } from "crypto";
-import { mkdir, writeFile, unlink } from "fs/promises";
-import path from "path";
+import { getCloudflareEnv } from "@/lib/cf";
 
-const UPLOAD_DIR = path.join(process.cwd(), "public", "uploads");
+/**
+ * Nakhl Restaurant — image uploads on Cloudflare R2
+ * --------------------------------------------------
+ * Storage backend: the R2 bucket bound as `R2` in wrangler.jsonc (also
+ * available in local `next dev` through Miniflare — persistent state under
+ * `.wrangler/state`). Stored objects are served by the route handler at
+ * `/f/[...key]` (see src/app/f/[...key]/route.ts), which streams bytes from
+ * R2 with immutable-cache headers.
+ *
+ * Validation (type allow-list + 5MB cap) matches the previous filesystem
+ * implementation; the sharp re-encode pipeline of the sandbox build was a
+ * Node-only optimization step and is intentionally not part of the
+ * Cloudflare runtime — files are stored as received (dimensions/quality
+ * unchanged).
+ */
+
 const MAX_SIZE = 5 * 1024 * 1024; // 5MB
 
 export const ALLOWED_IMAGE_TYPES = [
@@ -15,6 +27,17 @@ export const ALLOWED_IMAGE_TYPES = [
   "image/gif",
   "image/avif",
 ];
+
+const EXTENSION_BY_TYPE: Record<string, string> = {
+  "image/jpeg": "jpg",
+  "image/png": "png",
+  "image/webp": "webp",
+  "image/gif": "gif",
+  "image/avif": "avif",
+};
+
+/** URL prefix under which stored R2 objects are served. */
+export const UPLOAD_URL_PREFIX = "/f/";
 
 export interface UploadResult {
   success: boolean;
@@ -26,13 +49,26 @@ export interface UploadResult {
 
 export type ImageKind = "food" | "avatar" | "general";
 
+/** Extract the R2 object key from a stored upload URL (`/f/<key>` or legacy `/uploads/<file>`). */
+function keyFromUrl(url: string): string | null {
+  if (url.startsWith(UPLOAD_URL_PREFIX)) {
+    return url.slice(UPLOAD_URL_PREFIX.length) || null;
+  }
+  // legacy filesystem URLs (pre-Cloudflare rows): object key == basename
+  if (url.startsWith("/uploads/")) {
+    return url.slice("/uploads/".length) || null;
+  }
+  return null;
+}
+
 /**
- * Professional image upload: validates, optimizes via sharp, stores under /public/uploads,
- * records in DB. Avatars are squared 400px; food images max 1200px webp.
+ * Store an uploaded image in R2 and record it in the database.
+ * Avatars and food images keep their original bytes; the key embeds the
+ * kind and a random UUID (collision-free, immutable-cache friendly).
  */
 export async function saveImageUpload(
   file: File,
-  opts: { kind?: ImageKind; uploadedBy?: string }
+  opts: { kind?: ImageKind; uploadedBy?: string },
 ): Promise<UploadResult> {
   const kind = opts.kind ?? "general";
   try {
@@ -46,50 +82,38 @@ export async function saveImageUpload(
       return { success: false, error: "فرمت فایل مجاز نیست (JPG، PNG، WebP، GIF)" };
     }
 
-    const buffer = Buffer.from(await file.arrayBuffer());
-
-    // Optimize with sharp
-    const pipeline = sharp(buffer, { failOn: "none" }).rotate();
-    let output: Buffer;
-    let width: number | undefined;
-    let height: number | undefined;
-
-    if (kind === "avatar") {
-      output = await pipeline
-        .resize(400, 400, { fit: "cover", position: "attention" })
-        .webp({ quality: 85 })
-        .toBuffer();
-      width = height = 400;
-    } else if (kind === "food") {
-      output = await pipeline
-        .resize(1200, 900, { fit: "inside", withoutEnlargement: true })
-        .webp({ quality: 82 })
-        .toBuffer();
-    } else {
-      output = await pipeline
-        .resize(1600, 1600, { fit: "inside", withoutEnlargement: true })
-        .webp({ quality: 85 })
-        .toBuffer();
+    const env = await getCloudflareEnv();
+    const bucket = env?.R2;
+    if (!bucket) {
+      return {
+        success: false,
+        error: "فضای ذخیره‌سازی R2 در دسترس نیست (اتصال binding «R2» را بررسی کنید)",
+      };
     }
 
-    const meta = await sharp(output).metadata();
+    const extension = EXTENSION_BY_TYPE[file.type] ?? "bin";
+    const key = `${kind}-${crypto.randomUUID()}.${extension}`;
+    const bytes = new Uint8Array(await file.arrayBuffer());
 
-    const filename = `${kind}-${randomUUID()}.webp`;
-    await mkdir(UPLOAD_DIR, { recursive: true });
-    await writeFile(path.join(UPLOAD_DIR, filename), output);
+    await bucket.put(key, bytes, {
+      httpMetadata: {
+        contentType: file.type,
+        cacheControl: "public, max-age=31536000, immutable",
+      },
+    });
 
-    const url = `/uploads/${filename}`;
+    const url = `${UPLOAD_URL_PREFIX}${key}`;
     await db.upload.create({
       data: {
-        filename,
+        filename: key,
         url,
-        mimeType: "image/webp",
-        size: output.length,
+        mimeType: file.type,
+        size: bytes.byteLength,
         uploadedBy: opts.uploadedBy ?? null,
       },
     });
 
-    return { success: true, url, filename, size: output.length, ...(width ? { width, height } : {}) } as UploadResult;
+    return { success: true, url, filename: key, size: bytes.byteLength };
   } catch (e) {
     return {
       success: false,
@@ -98,13 +122,22 @@ export async function saveImageUpload(
   }
 }
 
-/** Delete an uploaded file by URL (admin) */
+/** Delete an uploaded file by URL (admin) — removes the R2 object and its DB row. */
 export async function deleteUploadByUrl(url: string): Promise<boolean> {
   try {
+    const key = keyFromUrl(url);
+    if (!key) return false;
+
     const record = await db.upload.findFirst({ where: { url } });
     if (!record) return false;
-    const filename = path.basename(url);
-    await unlink(path.join(UPLOAD_DIR, filename)).catch(() => {});
+
+    const env = await getCloudflareEnv();
+    const bucket = env?.R2;
+    if (bucket) {
+      await bucket.delete(key);
+    } else {
+      console.warn("[uploads] R2 binding missing — deleted the DB row only");
+    }
     await db.upload.delete({ where: { id: record.id } });
     return true;
   } catch {

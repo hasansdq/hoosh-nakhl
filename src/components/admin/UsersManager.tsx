@@ -198,7 +198,7 @@ export function UsersManager({ initialFilter }: { initialFilter?: string } = {})
       )}
 
       {/* user detail */}
-      <Dialog open={!!detail} onOpenChange={(open) => !open && setDetail(null)} dir="rtl">
+      <Dialog open={!!detail} onOpenChange={(open) => !open && setDetail(null)}>
         <DialogContent className="max-h-[90vh] max-w-xl overflow-y-auto rounded-2xl" aria-describedby={undefined}>
           {detail && (
             <>
