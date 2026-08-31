@@ -980,3 +980,34 @@ Stage Summary (نتیجهٔ نهایی و تأییدها):
 - تأییدهای زنده: GET / → HTTP 200 (۵۰KB HTML، محتوای فارسی: رستوران نخل/هوش نخل/سفارش)؛ GET /api/menu → 200؛ GET /nk-admin → 200؛ handshake سالم socket.io روی :3003 (engine.io sid)؛ bun run lint پاک
 - تست بقای سرور بین فراخوانی‌های ابزار پاس شد (PID 2569 فرزند notify-service زنده ماند)
 - نکات برای فاز بعد: ۱) اگر dev server قطع شد، حداکثر ۳۰ ثانیه بعد خودش بالا می‌آید — لاگ‌های [supervisor] در .zscripts/mini-service-notify-service.log؛ ۲) اسکرین‌شات‌های QA را دیگر در ریپو ذخیره نکنید (gitignore شده)؛ ۳) بک‌لاگ فازهای قبلی (ریسپانسیو موبایل، RTL ادمین، CMS اطلاعات تماس و…) معتبر و در اولویت بعدی است
+
+---
+Task ID: prod-1
+Agent: Z.ai Code (main)
+Task: آماده‌سازی کامل و حرفه‌ای پروژه برای بیلد/دیپلوی پروداکشن خارج از z.ai + توضیح کامل نحوه استقرار
+
+Work Log:
+- کاوش کامل: env vars (AUTH_SECRET/ADMIN_NOTIFY_KEY/DATABASE_URL)، سه نقطهٔ اتصال socket.io (OrdersView/TrackView/AdminPanel)، URL notify (localhost:3003 hardcode)، بک‌دورهای dev (devCode OTP، شبیه‌سازی زرین‌پال، sandbox)، مسیر آپلود (public/uploads)، seed موجود (db/custom.db در git + prisma/seed.ts قدیمی)
+- امنیت پروداکشن (گیت‌های امنیتی):
+  * send-otp: نمایش devCode فقط در non-production یا NAKHL_EXPOSE_DEV_CODE=1
+  * zarinpal: ZARINPAL_FORCE_REAL=1 = خاموش‌کنندهٔ قطعی درگاه شبیه‌سازی (پرداخت واقعی یا خطای صریح)
+  * notify-service supervisor: غیرفعال خودکار با NODE_ENV=production + override با NAKHL_SUPERVISE_DEV و NAKHL_PROJECT_ROOT/NAKHL_DEV_PORT (sandbox بدون تغییر کار می‌کند)
+- Realtime قابل‌حمل: src/lib/realtime.ts جدید (connectRealtime) — سندباکس: io("/?XTransformPort=3003")، پروداکشن: io({path: NEXT_PUBLIC_SOCKET_PATH=/rt}) — هر ۳ کامپوننت مهاجرت کردند؛ notify.ts: NAKHL_NOTIFY_URL برای Docker (http://notify:3003/emit)
+- next.config.ts: هدرهای امنیتی (nosniff/SAMEORIGIN/Referrer/Permissions) + no-store برای API + poweredByHeader:false + compress (output:standalone از قبل بود)
+- /api/health جدید (db ping + version) برای Docker HEALTHCHECK و مانیتورینگ
+- Seed حرفه‌ای: prisma/seed.ts بازنویسی (idempotent، ۷ دسته/۳۰ آیتم/۳ کوپن از seed-data.json، ادمین از env، تنظیمات production-safe وقتی NODE_ENV=production: devMode=false/sandbox=false/simulation=false/provider=openrouter)
+- کیت Docker: Dockerfile دومرحله‌ای (node:22-slim + bun فقط برای install/build؛ runtime همه‌چیز node — امن‌ترین)، docker/entrypoint.sh (اولین boot: db push + seed خودکار)، mini-services/notify-service/Dockerfile (bun — همان runtime اثبات‌شدهٔ سندباکس)، docker-compose.yml (web/notify/caddy + volumes: db_data/uploads_data/caddy + healthcheck ها)، Caddyfile.prod (TLS خودکار + مسیر /rt برای WebSocket)، .dockerignore
+- کیت VPS بدون Docker: deploy/systemd/{nakhl-web,nakhl-notify}.service + deploy/pm2/ecosystem.config.cjs + deploy/caddy/Caddyfile.vps
+- .env.example جامع فارسی + !.env.example در .gitignore + package.json: start/start:node/db:seed + نسخه 1.0.0
+- DEPLOY-FA.md: راهنمای کامل فارسی (معماری، پیش‌نیازها، Docker Compose گام‌به‌گام، VPS/systemd، تنظیمات پنل، چک‌لیست امنیتی، بکاپ/بازیابی، به‌روزرسانی، عیب‌یابی، جدول env ها)
+
+Stage Summary:
+- ✅ بیلد پروداکشن واقعی تأیید شد (در /home/z/tmp-prod ایزوله — dev server سندباکس دست‌نخورده): next build standalone بدون خطا
+- ✅ شبیه‌سازی کامل Docker: کپی prisma/sharp/@img در standalone + کامپایل seed به CJS (نکتهٔ کشف‌شده: Bun مقدار NODE_ENV را هنگام bundle به‌صورت static درج می‌کند → با NODE_ENV=production بیلد شد → seeder داکری همیشه production-safe)
+- ✅ اولین boot روی دیتابیس تازه: db push + seed → تنظیمات امن (devMode:false, simulation:false, provider:openrouter) تأیید با query مستقیم
+- ✅ Smoke test سرور standalone (node) روی پورت 3111: /api/health 200 ✓، / 200 با رندر فارسی ✓، /api/menu 200 ✓، food/uploads/_next/static/manifest/sw.js همه 200 ✓، /nk-admin 200 ✓، 404 صحیح ✓، هدرهای امنیتی ✓، /rt در client bundle درج شده ✓ و XTransformPort حذف ✓
+- ✅ lint: ۲ خطای نهفتهٔ react-hooks (خواندن ref در render در AdminPanel + setState هم‌زمان در effect در OrdersView — الگوهای قدیمی که با تحلیل جدید eslint آشکار شدند) اصلاح شد → bun run lint exit 0
+- ✅ سندباکس سالم پس از همهٔ تغییرات (GET / 200، health 200، notify 3003 فعال)
+- commit: «production-ready: standalone build kit...» (26 فایل، +1923 خط)
+- نحوه دیپلوی کامل در DEPLOY-FA.md (خلاصهٔ سریع: cp .env.example .env → تنظیم DOMAIN/AUTH_SECRET/ADMIN_NOTIFY_KEY/ADMIN_PASSWORD → docker compose up -d --build → ورود از /nk-admin → تنظیم پیامک/زرین‌پال/OpenRouter از پنل)
+- برای فاز بعد: تست روی VPS واقعی با دامنه؛ migration از db push به prisma migrate برای عملیات بالغ‌تر؛ bump نسخهٔ sw.js در هر دیپلوی (در راهنما ذکر شد)؛ فعال‌سازی NAKHL_EXPOSE_DEV_CODE فقط برای تست موقت
