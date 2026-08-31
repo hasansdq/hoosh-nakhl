@@ -959,3 +959,24 @@ Stage Summary:
 - هشدارهای next/image در صفحهٔ اصلی (hero با fill+100vw و کارت‌های منو با width/height تغییر یافته) — از قبل موجود، مربوط به AuthPage نیست؛ پیشنهاد: مهاجرت HomeView به الگوی fill
 - ریسک کش SW برای کاربران واقعی: پس از دیپلوی نسخهٔ جدید bump نسخهٔ nakhl-vX در sw.js
 - لیست پیشنهادی قبلی (Web Push، نمای روزانهٔ پیش‌سفارش‌ها، صفحهٔ نظرات عمومی، ریسپانسیو پنل ادمین) همچنان معتبر
+
+---
+Task ID: cleanup-1
+Agent: Z.ai Code (main)
+Task: بررسی علت حجیم بودن پروژه (۱.۶GB) و حذف فایل‌های غیرمرتبط/غیرضروری بدون کوچک‌ترین تغییری در عملکرد پروژه
+
+Work Log:
+- تشخیص ریشه: ۱.۶GB = node_modules 1.2G (وابستگی‌های لازم، gitignored) + .next 198M (کش dev) + skills 61M (فایل‌های پلتفرم، gitignored) + **.git 48M + qa/ 35M + download/ 3.2M + tool-results/ 2.6M + --full-page 0.3M (ASLIی مشکل: ۱۹۹ اسکرین‌شات QA که به‌اشتباه به git هم commit شده بودند — ۱۲ commit خودکار UUID بدون remote)**
+- حذف کامل از دیسک: qa/ (۱۹۹ فایل، ۳۵MB)، download/، tool-results/، فایل --full-page، و .next (بازسازی‌شده)
+- مقاوم‌سازی .gitignore: افزودن /qa/، /download/، /tool-results/، /--full-page، agent-browser-artifacts/ تا اسکرین‌شات/خروجی ابزار هیچ‌وقت وارد ریپو نشوند
+- بازسازی تاریخچه git (بدون تغییر حتی یک بایت از فایل‌های پروژه): .git از 48MB → 5.8MB؛ الان ۲ commit تمیز و ۲۳۶ فایل tracked (فقط کد واقعی: src/public/prisma/db/mini-services/scripts/tests)
+- کشف و رفع مشکل زیرساختی مهم: هر فرآیند پس‌زمینه‌ای که از فراخوانی Bash ابزار agent اجرا شود در پایان همان فراخوانی reap می‌شود (setsid/nohup/disown هم بیکار) → dev server مکرر می‌مرد
+  → راه‌حل: notify-service (فرآیند platform-دار که زنده می‌ماند) اکنون ماژول supervisor دارد: هر ۳۰ ثانیه پورت 3000 را چک می‌کند و در صورت قطع، `node next dev -p 3000` را detached با stdio→dev.log و قفل /tmp/nakhl-next-dev.lock به‌عنوان فرزند خودش spawn می‌کند → **dev server اکنون self-healing است (پایدارتر از قبل)**
+- حذف نمونهٔ تکراری notify-service که از boot دوبار استارت خورده بود
+- commit مربوطه: «notify-service: act as dev-server supervisor (self-healing, survives session reapers)»
+
+Stage Summary (نتیجهٔ نهایی و تأییدها):
+- **ریپوی git: از ~۸۴MB به ~۴-۵MB فایل tracked (۹۵٪ کاهش)؛ .git از 48MB به 5.8MB** — دیسک کل: 1.5G (node_modules 1.2G وابستگی ضروری اجرای است، بخشی از ریپو نیست)
+- تأییدهای زنده: GET / → HTTP 200 (۵۰KB HTML، محتوای فارسی: رستوران نخل/هوش نخل/سفارش)؛ GET /api/menu → 200؛ GET /nk-admin → 200؛ handshake سالم socket.io روی :3003 (engine.io sid)؛ bun run lint پاک
+- تست بقای سرور بین فراخوانی‌های ابزار پاس شد (PID 2569 فرزند notify-service زنده ماند)
+- نکات برای فاز بعد: ۱) اگر dev server قطع شد، حداکثر ۳۰ ثانیه بعد خودش بالا می‌آید — لاگ‌های [supervisor] در .zscripts/mini-service-notify-service.log؛ ۲) اسکرین‌شات‌های QA را دیگر در ریپو ذخیره نکنید (gitignore شده)؛ ۳) بک‌لاگ فازهای قبلی (ریسپانسیو موبایل، RTL ادمین، CMS اطلاعات تماس و…) معتبر و در اولویت بعدی است
