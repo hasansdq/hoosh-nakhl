@@ -19,14 +19,20 @@ else
 fi
 
 echo "🗄️  同步构建产物中的数据库结构..."
-(
-    cd "$PROJECT_DIR"
-    DATABASE_URL="file:$TARGET_DB_PATH" bun run db:push
-)
-
-if [ ! -f "$TARGET_DB_PATH" ]; then
-    echo "❌ 数据库初始化命令执行成功，但未生成 $TARGET_DB_PATH"
-    exit 1
+# Cloudflare D1 deployment: the app runtime uses the D1 binding (wrangler.jsonc)
+# and no packaged SQLite file is needed. The legacy `db:push` step only runs
+# when that script still exists (Node/Prisma-CLI projects).
+if grep -q '"db:push"' "$PROJECT_DIR/package.json"; then
+    (
+        cd "$PROJECT_DIR"
+        DATABASE_URL="file:$TARGET_DB_PATH" bun run db:push
+    )
+    if [ ! -f "$TARGET_DB_PATH" ]; then
+        echo "❌ 数据库初始化命令执行成功，但未生成 $TARGET_DB_PATH"
+        exit 1
+    fi
+else
+    echo "ℹ️  Cloudflare D1 项目 — 无需打包 SQLite 数据库文件"
 fi
 
 echo "✅ 构建产物数据库已准备完成"

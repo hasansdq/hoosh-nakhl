@@ -22,10 +22,11 @@ generator client {
 datasource db {
   provider = "sqlite"
 
-  // Only used by the Prisma CLI (migrate diff / format). The application
-  // runtime always goes through the D1 binding (src/lib/db.ts) and never
-  // reads this URL — production runs on Cloudflare D1.
-  url = env("DATABASE_URL")
+  // CLI-only placeholder (migrate diff / generate). The application runtime
+  // always goes through the D1 binding (src/lib/db.ts) and never opens this
+  // file — production runs on Cloudflare D1. A literal URL keeps `prisma
+  // generate` working in CI/Cloudflare Builds without any .env present.
+  url = "file:./cli-only.db"
 }
 
 // ============ Users & Auth ============

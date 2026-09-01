@@ -102,7 +102,8 @@ bun run deploy        # = cf:build (بیلد OpenNext) + opennextjs-cloudflare d
 
 - **مسیر کد dev/prod یکی است**: `next dev` محلی با Miniflare واقعی (D1/R2/DO با state در `.wrangler/state`) اجرا می‌شود — همان bindingهایی که پروداکشن استفاده می‌کند.
 - **Real-time**: مرورگر به `wss://<domain>/api/ws` وصل می‌شود؛ آپگرید WebSocket در `src/worker.js` (پیش از ورود به Next.js) به Durable Object `NakhlRealtime` روتر می‌شود. اتاق‌ها: `admins` (با کلید ADMIN_NOTIFY_KEY) و `customer:NK-XXXX`. emit سمت سرور از `src/lib/notify.ts` مستقیماً از طریق binding انجام می‌شود.
-- **Prisma**: کلاینت بدون engine (کامپایلر WASM) در `src/generated/prisma` + آداپتور `@prisma/adapter-d1`.
+- **Prisma**: کلاینت بدون engine (کامپایلر WASM) در `src/generated/prisma` + آداپتور `@prisma/adapter-d1`. این پوشه **در git نیست** — با `prisma generate` ساخته می‌شود و به‌صورت خودکار در `postinstall` (بعد از `bun install`) و ابتدای `cf:build` اجرا می‌گردد؛ بنابراین Cloudflare Builds نیازی به کار اضافه ندارد. فایل باینری بی‌استفاده `*.so.node` که generator کنار کلاینت می‌گذارد به‌صورت خودکار حذف می‌شود.
+- **اسکیمای Prisma**: `url` دیتاسورس فقط placeholder متنی برای CLI است (`file:./cli-only.db` — هرگز ساخته نمی‌شود)؛ هیچ `DATABASE_URL` لازم نیست و runtime همیشه از binding D1 استفاده می‌کند.
 - **آپلود**: ذخیره در R2 با کلید `food|avatar|general-<uuid>.<ext>` و سرو از مسیر `/f/<key>` (immutable cache).
 - **تصاویر**: بهینه‌سازی `_next/image` روی Cloudflare غیرفعال است (سرویس Cloudflare Images پولی است) — تصاویر اصلی سرو می‌شوند. برای فعال‌سازی، binding `IMAGES` اضافه کرده و `images.unoptimized` را در `next.config.ts` بردارید.
 - **هشدار بی‌ضرر بیلد**: در خروجی `cf:build` پیام «NakhlRealtime … not exported» مربوط به worker داخلی OpenNext است؛ دیپلوی واقعی از `src/worker.js` استفاده می‌کند که کلاس را export کرده (تست E2E تأیید شده).

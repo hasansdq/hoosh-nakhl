@@ -65,5 +65,12 @@ agent-browser-artifacts/
 .open-next/
 .wrangler/
 .dev.vars
-# inert native engine binary the prisma generator drops next to the workerd client
-src/generated/prisma/*.so.node
+# Prisma generated client — produced by `prisma generate` (postinstall / db:generate),
+# never committed. Fresh clones & Cloudflare Builds generate it automatically.
+/src/generated/
+# runtime junk
+.zscripts/dev.pid
+# local SQLite files (legacy dev DB path — app runtime uses the D1 binding)
+/db/
+# per-service logs
+.zscripts/*.log
