@@ -1051,3 +1051,30 @@ Stage Summary (تأییدهای زنده روی workerd واقعی با wrangler
 - دستور دیپلوی: bun run db:migrate:remote && bun run db:seed:remote && bun run deploy
 - نکته: هشدار «NakhlRealtime not exported» در خروجی cf:build مربوط به worker داخلی OpenNext است (main واقعی src/worker.js است و کلاس را export می‌کند) — بی‌ضرر و مستند
 - نکته: بهینه‌سازی تصویر (sharp) در مسیر CF حذف رفت (تصاویر اصلی سرو می‌شوند)؛ فعال‌سازی بعدی با binding IMAGES ممکن است
+
+---
+Task ID: cleanup-2
+Agent: Z.ai Code (main)
+Task: بررسی مجدد ریپو و پروژه + حذف فایل‌های غیرضروری و کاهش حجم — بدون آسیب به عملکرد (درخواست کاربر)
+
+Work Log:
+- کشف ریشهٔ قطع کامل محیط (dev server + notify-service هر دو خاموش): اسکریپت platform boot یعنی .zscripts/dev.sh هنوز `bun run db:push` را صدا می‌زد که در مهاجرت Cloudflare حذف شده بود → boot از همان گام دوم می‌مُرد (لاگ .zscripts/dev.log: «Script not found db:push»)
+- آزمون رفتار reaper بین فراخوانی‌های ابزار: setsid مستقیم reap می‌شود؛ ولی فرآیند «یتیم» (parent فوراً exit کند و فرزند به init/PPID1 برسد) زنده می‌ماند → استراتژی boot امن پیدا شد
+- رفع .zscripts/dev.sh: گام db:push → `db:migrate:local` + `db:seed:local` (هر دو idempotent)؛ رفع .zscripts/database-runtime-build.sh: گارد شرطی برای پروژه‌های D1 (بدون SQLite بسته‌بندی)
+- پاک‌سازی ریپو (git): untrack کامل src/generated (۲.۴MB شامل wasm ‏۲.۱۷MB — تولید با postinstall)، حذف db/custom.db ‏(runtime فقط D1)، حذف public/uploads/*.webp ‏(آپلود=R2)، حذف Dockerfile سرویس notify (مسیر CF=DO)، حذف tests/*.sh و agent-ctx/*.md و .zscripts/dev.pid (همگی gitignore شدند)
+- پاک‌سازی وابستگی‌ها: حذف ۷ پکیج واقعاً بلااستفاده (@mdxeditor/editor، react-syntax-highlighter، @tanstack/react-table، @dnd-kit×۳، @reactuses/core) + پاک‌سازی فیزیکی دایرکتوری‌های extraneous در node_modules (~۳۰MB)؛ sharp حفظ شد (optionalDep خود next — بهینه‌ساز تصویر dev)
+- حذف ۱۷MB باینری بی‌استفاده libquery_engine-*.so.node از دیسک + حذف خودکار در postinstall/db:generate/cf:build (`rm -f src/generated/prisma/*.so.node`)
+- prisma/schema.prisma: url دیتاسورس → placeholder متنی (`file:./cli-only.db`)؛ .env بدون DATABASE_URL — آخرین `file:` از کل مسیرها حذف شد؛ postinstall جدید + cf:build با prisma generate شروع می‌شود (Cloudflare Builds بدون گام اضافه)
+- sw.js: مسیر cache-first به‌روزشده `/uploads/` → `/f/` (مسیر سرو R2) + bump نسخه به nakhl-v3 (کلاینت‌های قدیمی SW خودکار آپدیت می‌شوند)
+- بازیابی استک: D1 محلی migrate (۴۹ دستور) + seed → notify-service به‌صورت «یتیمِ init» استارت (setsid با exit فوری parent) → supervisor خودش next dev را بالا آورد — پشته self-healing مثل قبل
+- .open-next ‏(۳۹MB خروجی cf:build برای تأیید) بعد از تست موفق حذف شد (بازتولید: bun run cf:build)
+
+Stage Summary (تأییدهای زنده):
+- **ریپو: فایل‌های tracked از ۸.۹MB به ۴.۷۸MB (−۴۶٪، ۲۳۷ فایل)؛ .git بعد از gc: ‏۴.۸۳MiB packed** — تولیدشده/کش/باینری‌های مرده دیگر در git نیستند
+- **دیسک (بدون کش سرورِ زنده): ~۴۳MB مرده حذف شد** (۱۷MB engine باینری + ~۲۵MB پکیج‌های extraneous + بقیهٔ فایل‌ها)؛ node_modules = ‏۱۴۹۰MB وابستگیِ لازم اجرا (زیرساخت CF: ‏@cloudflare/miniflare/wrangler + next + prisma)
+- ✅ bun run typecheck: صفر خطا؛ bun run lint: صفر خطا/هشدار
+- ✅ **cf:build (بیلد پروداکشن Workers) موفق** — «Worker saved in .open-next/worker.js 🚀» (اولین اجرا به‌خاطر OOM با استکِ روشن fail شد؛ بعد از توقف موقت dev stack با RAM آزاد موفق)
+- ✅ E2E مرورگر: صفحهٔ اصلی رندر کامل فارسی RTL + منو از D1 (کباب‌ها…) → افزودن کباب کوبیده به سبد → drawer سبد با قیمت ۱۸۵,۰۰۰ تومان + کنترل تعداد → /nk-admin صفحهٔ ورود ادمین — صفر خطای کنسول
+- ✅ /api/health: db:up؛ /api/menu کامل؛ handshake socket.io روی :3003؛ /_next/image با sharp کار می‌کند (hero 182KB→۴۴KB)؛ sw.js نسخهٔ v3 سرو می‌شود
+- استک خودترمیم‌کننده: notify-service (یتیم init) هر ۳۰ ثانیه پورت 3000 را چک می‌کند؛ لاگ: .zscripts/mini-service-notify-service.log
+- نکات فاز بعد: ۱) اگر RAM کافی نیست cf:build را با استکِ خاموش اجرا کنید (الگوی همین فاز)؛ ۲) اسکریپت dev.sh الان با D1 همیشه boot می‌شود — بعد از هر snapshot/ریبوت محیط خودکار بالا می‌آید؛ ۳) public/food PNGها (~۳MB) قابل فشرده‌سازی هستند ولی برای صفرریسک دست نزدم؛ ۴) بک‌لاگ قبلی (ریدایرکت ۳۰۱ sw bump، Web Push، نظرات عمومی…) معتبر است
