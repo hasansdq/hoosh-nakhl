@@ -7,7 +7,7 @@
  *  - Other /api/*: network-only (auth/session-dependent)
  *  - Cross-origin: pass-through (no interception)
  */
-const VERSION = "nakhl-v3";
+const VERSION = "nakhl-v4";
 const CORE_ASSETS = [
   "/",
   "/manifest.json",
@@ -60,6 +60,9 @@ self.addEventListener("fetch", (event) => {
     url.pathname.startsWith("/_next/static/") ||
     url.pathname.startsWith("/food/") ||
     url.pathname.startsWith("/f/") ||
+    url.pathname === "/favicon.ico" ||
+    url.pathname === "/icon.svg" ||
+    url.pathname === "/apple-icon.png" ||
     /^\/icon-(192|512|maskable-512)\.png$/.test(url.pathname) ||
     url.pathname === "/logo.svg" ||
     url.pathname === "/manifest.json"

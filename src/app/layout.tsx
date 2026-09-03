@@ -20,13 +20,9 @@ export const metadata: Metadata = {
   keywords: ["رستوران نخل", "رفسنجان", "سفارش آنلاین غذا", "هوش مصنوعی", "رستوران"],
   authors: [{ name: "رستوران نخل رفسنجان" }],
   manifest: "/manifest.json",
-  icons: {
-    icon: [
-      { url: "/icon-192.png", sizes: "192x192", type: "image/png" },
-      { url: "/icon-512.png", sizes: "512x512", type: "image/png" },
-    ],
-    apple: [{ url: "/icon-192.png", sizes: "192x192", type: "image/png" }],
-  },
+  // Favicon & apple-touch-icon come from the app-router file conventions:
+  // src/app/favicon.ico (16/32/48), src/app/icon.svg (vector), src/app/apple-icon.png (180).
+  // Next.js emits the <link> tags automatically — no manual `icons` config needed.
   openGraph: {
     title: "رستوران نخل رفسنجان | سفارش آنلاین با هوش مصنوعی",
     description: "با هوش نخل سفارش بده، مثل حضوری!",

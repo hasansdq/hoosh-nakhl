@@ -14,6 +14,7 @@
     "db:seed:local": "wrangler d1 execute DB --local --file seed/seed-core.sql && wrangler d1 execute DB --local --file seed/settings-dev.sql",
     "db:seed:remote": "wrangler d1 execute DB --remote --file seed/seed-core.sql && wrangler d1 execute DB --remote --file seed/settings-prod.sql",
     "db:seed:generate": "bun scripts/generate-seed-sql.ts",
+    "icons:generate": "bun scripts/generate-favicons.ts",
     "build": "next build",
     "cf:build": "prisma generate && rm -f src/generated/prisma/*.so.node && NEXT_PUBLIC_CF_BUILD=1 NEXT_PUBLIC_REALTIME_MODE=workers opennextjs-cloudflare build",
     "cf:dev": "wrangler dev",
