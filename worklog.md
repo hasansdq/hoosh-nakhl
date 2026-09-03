@@ -1078,3 +1078,24 @@ Stage Summary (تأییدهای زنده):
 - ✅ /api/health: db:up؛ /api/menu کامل؛ handshake socket.io روی :3003؛ /_next/image با sharp کار می‌کند (hero 182KB→۴۴KB)؛ sw.js نسخهٔ v3 سرو می‌شود
 - استک خودترمیم‌کننده: notify-service (یتیم init) هر ۳۰ ثانیه پورت 3000 را چک می‌کند؛ لاگ: .zscripts/mini-service-notify-service.log
 - نکات فاز بعد: ۱) اگر RAM کافی نیست cf:build را با استکِ خاموش اجرا کنید (الگوی همین فاز)؛ ۲) اسکریپت dev.sh الان با D1 همیشه boot می‌شود — بعد از هر snapshot/ریبوت محیط خودکار بالا می‌آید؛ ۳) public/food PNGها (~۳MB) قابل فشرده‌سازی هستند ولی برای صفرریسک دست نزدم؛ ۴) بک‌لاگ قبلی (ریدایرکت ۳۰۱ sw bump، Web Push، نظرات عمومی…) معتبر است
+
+---
+Task ID: favicon-1
+Agent: Z.ai Code (main)
+Task: افزودن فاوآیکون اختصاصی سامانه برای پروداکشن (درخواست کاربر)
+
+Work Log:
+- کشف: آیکون‌های فعلی (public/icon-*.png و logo.svg) فقط placeholder پیش‌فرض «Z» پلتفرم بودند و سامانه اصلاً favicon نداشت (مرورگرها در پروداکشن /favicon.ico را می‌خواستند و ۴۰۴ می‌گرفتند)
+- طراحی فاوآیکون = عین برند: همان نخل NakhlLogo در هدر (تنه + ۶ برگ خرما + خط زمین) با bg-primary سبز #1f5c40 (gradient ظریف تا #2d7a56) و برگ‌های شنی #f7f2e4 — تأیید بصری با VLM (رندر تمیز، بدون artifact)
+- ساخت scripts/generate-favicons.ts (bun + sharp؛ رندر برداری با density 576 + downscale lanczos برای لبه‌های تیز در ۱۶px) + اسکریپت npm جدید icons:generate — همهٔ آیکون‌ها از یک منبع برداری بازتولید می‌شوند
+- فایل‌های app-router convention (تگ‌های <link> خودکار با hash cache-busting): src/app/favicon.ico (کلاس ICODIR با ۳ ورودی PNG ۱۶/۳۲/۴۸ — دست‌ساز)، src/app/icon.svg، src/app/apple-icon.png (۱۸۰)
+- جایگزینی آیکون‌های PWA (icon-192/512 + maskable full-bleed با safe-zone ۸۰٪) و public/logo.svg از placeholder Z به نخل برند
+- layout.tsx: حذف metadata.icons دستی (conventions صاحب تگ‌ها شد — از دوبlicate شدن link جلوگیری شد)؛ sw.js: افزودن /favicon.ico و /icon.svg و /apple-icon.png به cache-first + bump VERSION به nakhl-v4
+
+Stage Summary (تأییدها):
+- ✅ dev: /favicon.ico ۲۰۰ image/x-icon (ICO معتبر ۳ سایز)، /icon.svg ۲۰۰، /apple-icon.png ۲۰۰ (۱۸۰×180) + تگ‌های link صحیح در head
+- ✅ مرورگر: fetch favicon موفق، icon.svg لود شد، صفر خطای کنسول
+- ✅ **cf:build (پروداکشن Workers) موفق**: ۴۹/۴۹ صفحه استاتیک شامل /apple-icon.png و /icon.svg؛ favicon.ico/icon.svg/apple-icon.png در server-functions/.next/server/app → «Worker saved in .open-next/worker.js 🚀» (استک موقتاً خاموش شد برای RAM؛ بعد از build ری‌استارت و self-healing)
+- ✅ استک کامل برگشت: GET / ‏۲۰۰، health db:up، notify-service زنده، lint صفر خطا
+- نکته: منبع طراحی فقط یک جاست — برای تغییر آیکون، فقط scripts/generate-favicons.ts را ویرایش و `bun run icons:generate` اجرا کنید
+- نکته: در دیپلوی واقعی Cloudflare هیچ کار اضافه لازم نیست — مسیرهای آیکون داخل worker باندل می‌شوند
