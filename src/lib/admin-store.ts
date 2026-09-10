@@ -13,6 +13,7 @@ export type AdminTab =
   | "dashboard"
   | "analytics"
   | "menu"
+  | "content"
   | "orders"
   | "users"
   | "coupons"

@@ -290,6 +290,19 @@ model Review {
   @@index([status, createdAt])
 }
 
+// ============ Site Content (CMS) ============
+// Admin-managed static texts & images of the storefront.
+// The field registry (key → label/type/default) lives in code
+// (src/lib/content-defs.ts) — rows here are *overrides* of those defaults,
+// so a missing row always falls back to the built-in default value.
+model SiteContent {
+  id        String   @id @default(cuid())
+  key       String   @unique // e.g. home.hero.title — must exist in the registry
+  value     String   @default("")
+  updatedBy String? // admin username
+  updatedAt DateTime @updatedAt
+}
+
 // ============ Settings & Admin ============
 
 model Setting {

@@ -181,7 +181,8 @@ export function MenuManager({ initialFilter }: { initialFilter?: string } = {}) 
     fd.append("file", file);
     fd.append("kind", "food");
     try {
-      const res = await fetch("/api/upload", { method: "POST", body: fd });
+      // admin-authenticated generic image upload endpoint (R2-backed)
+      const res = await fetch("/api/admin/upload", { method: "POST", body: fd });
       const data = await res.json();
       clearInterval(timer);
       if (data.success) {

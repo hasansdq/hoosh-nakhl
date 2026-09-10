@@ -17,6 +17,7 @@ import { UsersManager } from "./UsersManager";
 import { CouponsManager } from "./CouponsManager";
 import { ReviewsManager } from "./ReviewsManager";
 import { AdminSettings } from "./AdminSettings";
+import { ContentManager } from "./ContentManager";
 import { UploadsManager, AuditLogView } from "./UploadsAudit";
 import { AdminSearchPalette, type AdminSearchSelection } from "./AdminSearchPalette";
 import { ThemeToggle } from "@/components/ThemeToggle";
@@ -30,6 +31,7 @@ import {
   Users,
   Ticket,
   Star,
+  Wand2,
   Settings,
   UploadCloud,
   ScrollText,
@@ -46,6 +48,7 @@ const TABS: { key: AdminTab; label: string }[] = [
   { key: "dashboard", label: "داشبورد" },
   { key: "analytics", label: "تحلیل مالی" },
   { key: "menu", label: "مدیریت منو" },
+  { key: "content", label: "محتوای سایت" },
   { key: "orders", label: "سفارش‌ها" },
   { key: "users", label: "کاربران" },
   { key: "coupons", label: "کدهای تخفیف" },
@@ -59,6 +62,7 @@ const TAB_ICONS: Record<AdminTab, React.ElementType> = {
   dashboard: LayoutDashboard,
   analytics: BarChart3,
   menu: UtensilsCrossed,
+  content: Wand2,
   orders: ShoppingBag,
   users: Users,
   coupons: Ticket,
@@ -481,6 +485,7 @@ export function AdminPanel() {
               initialFilter={searchNav?.tab === "menu" ? searchNav.filter : undefined}
             />
           )}
+          {tab === "content" && <ContentManager />}
           {tab === "orders" && (
             <OrdersManager
               key={searchNav?.tab === "orders" ? `orders-${searchNav.nonce}` : "orders"}

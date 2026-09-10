@@ -17,6 +17,7 @@ import {
 import { Sheet, SheetContent, SheetTrigger, SheetTitle } from "@/components/ui/sheet";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { useCartStore, useCartHydrated, cartTotalCount } from "@/lib/cart-store";
+import { useContent } from "@/lib/use-content";
 import { Bot, Menu as MenuIcon, User as UserIcon, Package, PackageSearch, ShoppingCart, LogOut, Sparkles, Phone, Clock, LayoutDashboard, Instagram, ChevronLeft } from "lucide-react";
 import { formatPhone, toPersianDigits } from "@/lib/fa";
 import { fullName, api } from "@/lib/client-api";
@@ -76,6 +77,7 @@ function ScrollProgress() {
 
 export function SiteHeader() {
   const { user, view, setView, setAuthOpen, siteSettings } = useAppStore();
+  const { t } = useContent();
   const cartHydrated = useCartHydrated();
   const cartItems = useCartStore((s) => s.items);
   const cartCount = cartHydrated ? cartTotalCount(cartItems) : 0;
@@ -133,7 +135,7 @@ export function SiteHeader() {
             className="flex items-center gap-1.5 font-semibold"
           >
             <Sparkles className="h-3.5 w-3.5 text-gold" />
-            با «هوش نخل» سفارش بده؛ مثل حضوری!
+            {t("header.promo")}
           </motion.span>
           <motion.span
             initial={{ opacity: 0, x: -12 }}
@@ -176,7 +178,7 @@ export function SiteHeader() {
           <div className="min-w-0 text-right leading-tight">
             <div className="truncate text-base font-extrabold sm:text-lg">{siteSettings.restaurantName}</div>
             <div className="hidden text-[11px] text-muted-foreground sm:block">
-              {siteSettings.city} • سفارش آنلاین هوشمند
+              {t("header.brandTagline")}
             </div>
           </div>
         </button>
@@ -301,7 +303,7 @@ export function SiteHeader() {
               onClick={() => setAuthOpen(true)}
               className="shine-sweep h-10 rounded-xl px-4 text-[13px] font-bold shadow-lg shadow-primary/20 sm:text-sm"
             >
-              ورود / ثبت‌نام
+              {t("header.loginButton")}
             </Button>
           )}
 
@@ -312,7 +314,7 @@ export function SiteHeader() {
               </Button>
             </SheetTrigger>
             <SheetContent side="right" className="w-72 overflow-y-auto p-5">
-              <SheetTitle className="text-right">رستوران نخل</SheetTitle>
+              <SheetTitle className="text-right">{siteSettings.restaurantName}</SheetTitle>
 
               {/* CMS contact mini-card */}
               <div className="mt-4 space-y-2 rounded-2xl border bg-muted/40 p-3 text-xs text-muted-foreground">
@@ -367,7 +369,7 @@ export function SiteHeader() {
                 ))}
                 {!user && (
                   <Button onClick={() => { setMobileOpen(false); setAuthOpen(true); }} className="mt-3 font-bold">
-                    ورود / ثبت‌نام
+                    {t("header.loginButton")}
                   </Button>
                 )}
                 {user && (

@@ -1125,3 +1125,31 @@ Stage Summary:
 - نکتهٔ RAM: در کانتینر z، wrangler+workerd چند صد مگابایت مصرف می‌کنند — اگر FC محدودیت سخت داشت، در فاز بعد cache کم‌مصرف‌تر بررسی شود
 - نکته: seed پیش‌نمایش = settings-dev (تست‌پذیری OTP)؛ برای تغییر به settings-prod فقط خط آخر start.sh عوض شود
 - بک‌لاگ قبلی معتبر: Web Push، نظرات عمومی، ریسپانسیو ادمین…
+
+---
+Task ID: cms-1
+Agent: Z.ai Code (main)
+Task: سیستم مدیریت محتوای حرفه‌ای (CMS) — قابل‌سازی تمام متن‌ها و تصاویر ایستایی سایت از پنل مدیریت (درخواست کاربر)
+
+Work Log:
+- معماری CMS «رجیستری-محور»: منبع اصلی فیلدها در کد (src/lib/content-defs.ts با ۱۱۶ فیلد) + جدول SiteContent فقط برای Overrideها → سایت همیشه با پیش‌فرض‌ها رندر می‌شود حتی اگر DB/API قطع باشد
+- Prisma: مدل SiteContent (key/value/updatedBy/updatedAt) + migrations/0002_site_content.sql → prisma generate + اعمال روی D1 محلی (✅ ۳ دستور)
+- گروه‌بندی ۵گانه: صفحه اصلی (هیرو/آمار/۴قدم/منو/درباره/FAQ/تماس/CTA)، ورود و ثبت‌نام (نشان/عنوان/شرایط + پنل برند با ۳ کاشی غذا + ویژگی‌ها + آمار + ۳ نظر مشتری)، سربرگ، پاورقی، سئو
+- ویژگی‌های قالب‌بندی متن: نشانه [[متن]] = هایلایت طلایی، \n = شکست خط، متغیرهای زنده {city}/{restaurantName}/{workingHours}/{phone}/{address}/... از تنظیمات عمومی
+- سرور: src/lib/site-content.ts (کش ۱۵ثانیه‌ای، merge پیش‌فرض+override، اعتبارسنجی نوع/طول/URL تصویر، reset تک‌کلید/گروه) — import آن در routeهای ادمین + عمومی
+- APIها: GET /api/site-content (عمومی)؛ GET/PUT/DELETE /api/admin/site-content (با requireAdmin + zod + AuditLog)؛ POST /api/admin/upload (آپلود عمومی ادمین روی R2 — رفع باگ قدیمی MenuManager که به /api/upload ناموجود پست می‌زد → 404)
+- کلاینت: store.ts (siteContent + refreshSiteContent در boot)؛ src/lib/use-content.tsx (هوک t()/img() + کامپوننت RichText برای [[هایلایت]]/خط جدید + ContentImage: next/image برای مسیر محلی و <img> برای URL خارجی)
+- سیم‌کشی کامل کامپوننت‌ها: HomeView (هیرو کامل + آمار + ۴ قدم + عنوان منو/جستجو + ویژه‌ها + داستان + FAQ + تماس + CTA)، AuthPage (همه متن‌ها + تصویر پس‌زمینه برند + ۳ کاشی غذا + ویژگی‌ها + آمار + نظرات چرخان)، Header (پرومو/زیرنویس لوگو/دکمه ورود)، Footer (عناوین ستون‌ها + نوار اعتماد + کپی‌رایت)
+- layout.tsx: metadata → generateMetadata از CMS + متغیرهای تنظیمات عمومی (سئو مدیریت‌شده) + revalidate=300 (ISR)
+- پنل مدیریت: ContentManager.tsx — تب جدید «محتوای سایت» (آیکون Wand2): تب‌بندی ۵ گروه با شمارندهٔ شخصی‌سازی، جستجو، ویرایشگر نوع‌آگاه (Input/Textarea/تصویر با پیش‌نمایش + آپلود R2 + ورودی URL)، ردیابی تغییرات + نوار ذخیره شناور + Ctrl+S، بازگردانی تک‌فیلد/کل گروه (AlertDialog)، راهنمای نشانه‌گذاری، نمایش «آخرین ویرایش: ...»
+- AdminTab/TABS/TAB_ICONS/رندر در AdminPanel.tsx + admin-store.ts
+
+Stage Summary (تأییدها):
+- ✅ typecheck صفر خطا، lint صفر خطا/هشدار
+- ✅ API تست کامل: عمومی ۱۱۶ کلید؛ ادمین: GET لیست، PUT (saved=1/reset=1)، DELETE reset، کلید نامعتبر رد، بدون لاگین ۴۰۱، AuditLog: ۸ رکورد SITE_CONTENT_*
+- ✅ آپلود R2: POST /api/admin/upload → /f/general-*.png با 200 image/png
+- ✅ E2E مرورگر: صفحه اول رندر کامل (هیرو با هایلایت [[هوش نخل]] + شکست خط)، ویرایش نشان هیرو از پنل → ذخیره → سایت فوراً «🏆 برترین رستوران رفسنجان…» ({city} جایگزین شد)، بازگردانی تک‌فیلد → پیش‌فرض برگشت، صفحه ورود (عنوان/زیرعنوان/پنل برند/شرایط)، تصویر R2 روی صفحه ورود رندر شد، seo.title ادیت شد و <title> صفحه تغییر کرد و بعد از reset برگشت، ریسپانسیو ۳۹۰px + فوتر چسبیده، صفر خطای کنسول
+- ✅ خودترمیمی استک: next dev بعد از ری‌استارت توسط supervisor برگشت
+- نکته‌ها: پیش‌فرض‌ها مرجع کد هستند (نبود ردیف = پیش‌فرض)؛ برای دیپلوی CF واقعی: migrations/0002 خودکار با db:migrate:remote اعمال می‌شود؛ بستهٔ z-space هم migrations/ را شامل می‌شود
+- باگ رفع‌شده جانبی: MenuManager → آپلود تصویر آیتم منو حالا به /api/admin/upload (معتبر) می‌رود
+- بک‌لاگ معتبر: Web Push، نظرات عمومی، ریسپانسیو ادمین، گسترش CMS به CartView/TrackView/پروفایل در فاز بعدی

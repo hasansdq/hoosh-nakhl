@@ -19,6 +19,7 @@ import { Reveal } from "@/components/site/Reveal";
 import { Lightbox } from "@/components/site/Lightbox";
 import { ItemDetailDialog } from "@/components/site/ItemDetailDialog";
 import { useCartStore } from "@/lib/cart-store";
+import { useContent, RichText, ContentImage } from "@/lib/use-content";
 import { formatToman, toPersianDigits, normalizePersian, toEnglishDigits } from "@/lib/fa";
 import { prettyPhone } from "@/components/site/Header";
 import { motion } from "framer-motion";
@@ -70,42 +71,6 @@ interface ActiveCoupon {
   value: number;
   label: string;
 }
-
-const STATS = [
-  { icon: Award, value: "۱۵+", label: "سال تجربه" },
-  { icon: ShoppingBag, value: "۵۰٫۰۰۰+", label: "سفارش موفق" },
-  { icon: Star, value: "۴٫۹", label: "رضایت مشتری" },
-  { icon: Timer, value: "۳۰ دقیقه", label: "میانگین ارسال" },
-];
-
-const ABOUT_CHIPS = [
-  { icon: Leaf, label: "مواد اولیه تازه روزانه" },
-  { icon: ChefHat, label: "سرآشپز با ۲۰ سال تجربه" },
-  { icon: HeartHandshake, label: "پخت با عشق خانوادگی" },
-];
-
-const FAQS = [
-  {
-    q: "چطور با هوش نخل سفارش بدهم؟",
-    a: "کافی است روی «شروع سفارش با هوش نخل» بزنید و مثل حرف زدن با یک گارسون حرفه‌ای سفارشتان را بگویید؛ مثلاً «۲ کباب کوبیده و یک دوغ محلی». هوش نخل منو را پیشنهاد می‌دهد، سفارش را ثبت می‌کند و فاکتور شفاف نشان می‌دهد — بدون فرم طولانی و کلیک اضافه.",
-  },
-  {
-    q: "پرداخت چطور انجام می‌شود؟",
-    a: "پس از تأیید نهایی سفارش، فاکتوری با جزئیات کامل (جمع اقلام، هزینه ارسال و مالیات ۱۰٪) نمایش داده می‌شود و پرداخت از طریق درگاه امن زرین‌پال انجام می‌شود. رسید پرداخت و کد رهگیری سفارش بلافاصله صادر می‌شود.",
-  },
-  {
-    q: "هزینه و زمان ارسال چقدر است؟",
-    a: "ارسال با پیک اختصاصی نخل در سطح رفسنجان انجام می‌شود و معمولاً در حدود ۳۰ دقیقه به دست شما می‌رسد. برای سفارش‌های بالای سقف تعیین‌شده، ارسال رایگان است و هزینه دقیق ارسال پیش از پرداخت، به‌صورت شفاف در فاکتور درج می‌شود.",
-  },
-  {
-    q: "می‌توانم وسط گفتگو سفارشم را تغییر دهم؟",
-    a: "بله! هر لحظه تا قبل از پرداخت می‌توانید اقلام را کم و زیاد کنید، نوشیدنی اضافه کنید، روش ارسال را عوض کنید یا آدرس را تغییر دهید. فقط کافی است در همان گفتگو به هوش نخل بگویید.",
-  },
-  {
-    q: "کد تخفیف چطور اعمال می‌شود؟",
-    a: "کد تخفیف را همان‌جا در گفتگو به هوش نخل بگویید (مثلاً «کد تخفیفم NAKHL20 است»)؛ اعتبار کد بررسی و مبلغ تخفیف به‌صورت شفاف در فاکتور شما اعمال می‌شود. کدهای فعال را می‌توانید از بنر بالای صفحه هم کپی کنید.",
-  },
-];
 
 /** normalize text for search: Persian chars + digits unification */
 const searchNorm = (s: string) => normalizePersian(toEnglishDigits(s));
@@ -565,6 +530,7 @@ function applyMenuFilters(items: MenuItemPublic[], f: MenuFilters): MenuItemPubl
 
 export function HomeView() {
   const { menu, user, setView, setAuthOpen, siteSettings } = useAppStore();
+  const { t, img } = useContent();
   const favorites = useAppStore((s) => s.favorites);
   const recentlyViewed = useAppStore((s) => s.recentlyViewed);
   const hydrateRecentlyViewed = useAppStore((s) => s.hydrateRecentlyViewed);
@@ -672,6 +638,32 @@ export function HomeView() {
   const drinksCat = menu.find((c) => c.slug === "drinks");
   const foodCats = menu.filter((c) => c.slug !== "drinks");
 
+  // CMS-driven structured blocks (stats / steps / about chips / FAQs)
+  const stats = [
+    { icon: Award, value: t("home.stats1.value"), label: t("home.stats1.label") },
+    { icon: ShoppingBag, value: t("home.stats2.value"), label: t("home.stats2.label") },
+    { icon: Star, value: t("home.stats3.value"), label: t("home.stats3.label") },
+    { icon: Timer, value: t("home.stats4.value"), label: t("home.stats4.label") },
+  ];
+  const howSteps = [
+    { icon: MessageSquareText, title: t("home.how.step1.title"), desc: t("home.how.step1.desc") },
+    { icon: ChefHat, title: t("home.how.step2.title"), desc: t("home.how.step2.desc") },
+    { icon: Bike, title: t("home.how.step3.title"), desc: t("home.how.step3.desc") },
+    { icon: CreditCard, title: t("home.how.step4.title"), desc: t("home.how.step4.desc") },
+  ];
+  const aboutChips = [
+    { icon: Leaf, label: t("home.about.chip1") },
+    { icon: ChefHat, label: t("home.about.chip2") },
+    { icon: HeartHandshake, label: t("home.about.chip3") },
+  ].filter((c) => c.label.trim() !== "");
+  const faqs = [
+    { q: t("home.faq.q1"), a: t("home.faq.a1") },
+    { q: t("home.faq.q2"), a: t("home.faq.a2") },
+    { q: t("home.faq.q3"), a: t("home.faq.a3") },
+    { q: t("home.faq.q4"), a: t("home.faq.a4") },
+    { q: t("home.faq.q5"), a: t("home.faq.a5") },
+  ].filter((f) => f.q.trim() !== "");
+
   const normalizedQuery = useMemo(() => searchNorm(query.trim()), [query]);
   const searching = normalizedQuery.length >= 2;
 
@@ -778,7 +770,7 @@ export function HomeView() {
             >
             <Badge className="mb-4 gap-1.5 rounded-full bg-gradient-to-l from-primary to-gold px-3.5 py-1.5 text-xs sm:px-4 sm:text-sm text-white shadow-lg">
               <Sparkles className="h-4 w-4 shrink-0" />
-              اولین رستوران {siteSettings.city} با گارسون هوش مصنوعی
+              {t("home.hero.badge")}
             </Badge>
             </motion.div>
             <motion.h1
@@ -787,9 +779,7 @@ export function HomeView() {
               transition={{ delay: 0.14, type: "spring", stiffness: 110, damping: 18 }}
               className="text-[2rem] font-black leading-[1.35] sm:text-4xl sm:leading-[1.25] md:text-5xl md:leading-[1.2]"
             >
-              با <span className="gold-gradient-text">هوش نخل</span> سفارش بده،
-              <br />
-              مثل حضوری! 🌴
+              <RichText text={t("home.hero.title")} />
             </motion.h1>
             <motion.p
               initial={{ opacity: 0, y: 22 }}
@@ -797,8 +787,7 @@ export function HomeView() {
               transition={{ delay: 0.22, type: "spring", stiffness: 110, damping: 18 }}
               className="mx-auto mt-4 max-w-md text-[15px] leading-8 text-muted-foreground sm:mt-5 sm:text-base md:mx-0"
             >
-              دیگه لازم نیست منو رو ورق بزنی و فرم پر کنی؛ فقط مثل یک دوست با «هوش نخل» حرف بزن،
-              غذات رو انتخاب کن و پرداختت رو انجام بده. به همین راحتی!
+              {t("home.hero.subtitle")}
             </motion.p>
             <motion.div
               initial={{ opacity: 0, y: 22 }}
@@ -808,7 +797,7 @@ export function HomeView() {
             >
               <Button size="lg" onClick={goChat} className="shine-sweep h-14 rounded-2xl px-7 text-base font-extrabold shadow-xl shadow-primary/30 transition-transform hover:scale-[1.02]">
                 <Bot className="ml-2 h-6 w-6" />
-                شروع سفارش با هوش نخل
+                {t("home.hero.ctaPrimary")}
               </Button>
               <Button
                 size="lg"
@@ -816,7 +805,7 @@ export function HomeView() {
                 onClick={() => document.getElementById("menu-preview")?.scrollIntoView({ behavior: "smooth" })}
                 className="h-14 rounded-2xl px-7 text-base font-bold"
               >
-                مشاهده منو
+                {t("home.hero.ctaSecondary")}
                 <ArrowLeft className="mr-2 h-5 w-5" />
               </Button>
             </motion.div>
@@ -828,15 +817,15 @@ export function HomeView() {
             >
               <span className="flex items-center gap-1.5">
                 <ShieldCheck className="h-4 w-4 text-primary" />
-                پرداخت امن زرین‌پال
+                {t("home.hero.trustPayment")}
               </span>
               <span className="flex items-center gap-1.5">
                 <Bike className="h-4 w-4 text-primary" />
-                ارسال سریع در {siteSettings.city}
+                {t("home.hero.trustDelivery")}
               </span>
               <span className="flex items-center gap-1.5">
                 <Clock className="h-4 w-4 text-primary" />
-                {siteSettings.workingHours}
+                {t("home.hero.trustHours")}
               </span>
             </motion.div>
           </div>
@@ -849,17 +838,17 @@ export function HomeView() {
             className="relative mx-auto w-full max-w-md"
           >
             <div className="relative overflow-hidden rounded-[2rem] border-4 border-card shadow-2xl shadow-primary/20">
-              <Image
-                src="/food/hero.png"
-                alt="فضای داخلی رستوران نخل رفسنجان"
+              <ContentImage
+                src={img("home.hero.image")}
+                alt={t("home.hero.imageCaptionTitle")}
                 width={720}
                 height={360}
                 priority
                 className="h-auto w-full object-cover"
               />
               <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 to-transparent p-4 pt-10 text-white">
-                <div className="text-sm font-bold">رستوران نخل رفسنجان</div>
-                <div className="text-xs opacity-90">محیط دلنشین • غذای اصیل ایرانی</div>
+                <div className="text-sm font-bold">{t("home.hero.imageCaptionTitle")}</div>
+                <div className="text-xs opacity-90">{t("home.hero.imageCaptionSubtitle")}</div>
               </div>
             </div>
             {/* floating cards */}
@@ -868,7 +857,7 @@ export function HomeView() {
                 <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary text-primary-foreground">
                   <MessageSquareText className="h-4.5 w-4.5" />
                 </div>
-                <div className="text-[11px] leading-5 sm:text-xs">هوش نخل: قربان، امروز چه میل دارید؟ 🌿</div>
+                <div className="text-[11px] leading-5 sm:text-xs">{t("home.hero.chatBubble")}</div>
               </div>
             </Card>
             <Card className="nakhl-float-slow absolute -bottom-4 -left-1 rounded-2xl p-2.5 shadow-xl sm:-left-6 sm:p-3">
@@ -877,8 +866,8 @@ export function HomeView() {
                   <Star className="h-4.5 w-4.5" />
                 </div>
                 <div className="leading-5">
-                  <b>۴٫۹ از ۵</b>
-                  <div className="text-muted-foreground">رضایت مشتریان نخل</div>
+                  <b>{t("home.hero.ratingTitle")}</b>
+                  <div className="text-muted-foreground">{t("home.hero.ratingSubtitle")}</div>
                 </div>
               </div>
             </Card>
@@ -955,13 +944,13 @@ export function HomeView() {
                 <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-gold/15 text-gold shadow-inner">
                   <Flame className="h-5 w-5" />
                 </span>
-                پیشنهادهای ویژه نخل
+                {t("home.specials.title")}
               </h2>
               <div className="mt-3 h-1 w-12 rounded-full bg-gradient-to-l from-primary to-gold" />
             </div>
             <Badge variant="secondary" className="gap-1 bg-gold/15 text-gold-foreground">
               <Star className="h-3.5 w-3.5 text-gold" />
-              منتخب سرآشپز
+              {t("home.specials.badge")}
             </Badge>
           </div>
           </Reveal>
@@ -1053,7 +1042,7 @@ export function HomeView() {
       <section aria-label="آمار رستوران نخل" className="mx-auto max-w-6xl px-4 py-6">
         <Reveal>
         <div className="grid grid-cols-2 gap-3 rounded-3xl border border-primary/15 bg-gradient-to-l from-primary/10 via-primary/5 to-gold/10 p-4 sm:gap-4 sm:p-6 lg:grid-cols-4">
-          {STATS.map((s, i) => (
+          {stats.map((s, i) => (
             <div
               key={s.label}
               className="animate-fade-up flex items-center gap-3 rounded-2xl bg-card/60 p-3 transition-transform duration-300 hover:scale-[1.03] sm:p-4"
@@ -1076,18 +1065,13 @@ export function HomeView() {
       <section className="mx-auto max-w-6xl px-4 py-10">
         <div className="mb-8 text-center">
           <Reveal>
-          <h2 className="text-2xl font-black">سفارش در ۴ قدم ساده</h2>
-          <p className="mt-2 text-sm text-muted-foreground">بدون فرم طولانی، بدون کلیک اضافه — فقط یک گفتگوی ساده</p>
+          <h2 className="text-2xl font-black">{t("home.how.title")}</h2>
+          <p className="mt-2 text-sm text-muted-foreground">{t("home.how.subtitle")}</p>
           <div className="mx-auto mt-3.5 h-1 w-12 rounded-full bg-gradient-to-l from-primary to-gold" />
           </Reveal>
         </div>
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          {[
-            { icon: MessageSquareText, title: "۱. شروع گفتگو", desc: "سلام کن و منو کامل رو از هوش نخل بگیر" },
-            { icon: ChefHat, title: "۲. انتخاب غذا", desc: "غذا و نوشیدنی‌ات رو بگو؛ حتی وسط چت هم می‌تونی تغییرش بدی" },
-            { icon: Bike, title: "۳. پیک یا بیرونبر", desc: "آدرست رو بده تا با پیک برات بیاد یا خودت تحویل بگیر" },
-            { icon: CreditCard, title: "۴. پرداخت امن", desc: "فاکتور با مالیات شفاف، پرداخت درگاه زرین‌پال و رهگیری لحظه‌ای" },
-          ].map((step, i) => (
+          {howSteps.map((step, i) => (
             <Reveal key={i} delay={i * 80} className="h-full">
             <Card className="relative h-full gap-0 overflow-hidden rounded-2xl p-5 text-center transition-all hover:-translate-y-1 hover:shadow-lg">
               {/* faded step watermark for depth */}
@@ -1117,13 +1101,13 @@ export function HomeView() {
               <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-primary/10 text-primary shadow-inner">
                 <Leaf className="h-5 w-5" />
               </span>
-              نگاهی به منوی نخل
+              {t("home.menu.title")}
             </h2>
             <div className="mt-3 h-1 w-12 rounded-full bg-gradient-to-l from-primary to-gold" />
           </div>
           <Button onClick={goChat} size="sm" className="rounded-xl font-bold">
             <Bot className="ml-1.5 h-4 w-4" />
-            سفارش از هوش نخل
+            {t("home.menu.cta")}
           </Button>
         </div>
         </Reveal>
@@ -1135,7 +1119,7 @@ export function HomeView() {
             type="search"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="جستجو در کل منو؛ مثلاً «کباب» یا «دوغ»..."
+            placeholder={t("home.menu.searchPlaceholder")}
             className="h-12 rounded-2xl border-primary/20 bg-card pr-11 pl-11 text-sm shadow-sm"
             aria-label="جستجو در منوی رستوران"
           />
@@ -1486,17 +1470,15 @@ export function HomeView() {
           {/* text side */}
           <Reveal>
           <div>
-            <SectionHeading icon={Sparkles} title="داستان نخل 🌴" />
+            <SectionHeading icon={Sparkles} title={t("home.about.title")} />
             <p className="mt-5 text-sm leading-8 text-muted-foreground">
               {siteSettings.aboutText}
             </p>
             <p className="mt-4 text-sm leading-8 text-muted-foreground">
-              حالا با «هوش نخل» — گارسون هوشمند ما — همان تجربه حضوری را آنلاین زندگی کنید؛ کافی است مثل یک
-              دوست حرف بزنید تا سفارشتان در چند دقیقه آماده ارسال شود. از کباب برگ ممتاز تا شله‌زارد سنتی،
-              همه با همان ذوق روز اول.
+              {t("home.about.text")}
             </p>
             <div className="mt-6 flex flex-wrap gap-2">
-              {ABOUT_CHIPS.map((chip) => (
+              {aboutChips.map((chip) => (
                 <span
                   key={chip.label}
                   className="inline-flex items-center gap-1.5 rounded-full border border-primary/20 bg-primary/5 px-3.5 py-1.5 text-xs font-bold text-primary transition-transform hover:scale-105"
@@ -1514,16 +1496,16 @@ export function HomeView() {
           <div className="relative mx-auto w-full max-w-md">
             <div className="absolute -inset-4 rounded-[2.4rem] bg-gradient-to-l from-primary/15 to-gold/25 blur-2xl" aria-hidden />
             <div className="relative overflow-hidden rounded-[2rem] border-4 border-card shadow-2xl shadow-primary/20 transition-transform duration-500 hover:rotate-1 hover:scale-[1.01]">
-              <Image
-                src="/food/hero.png"
-                alt="سفره اصیل ایرانی در رستوران نخل رفسنجان"
+              <ContentImage
+                src={img("home.about.image")}
+                alt={t("home.about.imageCaptionTitle")}
                 width={720}
                 height={540}
                 className="h-72 w-full object-cover sm:h-80"
               />
               <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/65 to-transparent p-4 pt-10 text-white">
-                <div className="text-sm font-bold">سفره‌ای به اصالت خودِ ایران</div>
-                <div className="text-xs opacity-90">کباب کرمانی • دیزی خانوادگی • شله‌زارد سنتی</div>
+                <div className="text-sm font-bold">{t("home.about.imageCaptionTitle")}</div>
+                <div className="text-xs opacity-90">{t("home.about.imageCaptionSubtitle")}</div>
               </div>
             </div>
             <Card className="nakhl-float absolute -bottom-5 right-4 gap-0 rounded-2xl border-gold/40 p-3.5 shadow-xl">
@@ -1532,8 +1514,8 @@ export function HomeView() {
                   <Award className="h-5 w-5" />
                 </span>
                 <div className="leading-5">
-                  <b className="text-sm">از ۱۳۸۸</b>
-                  <div className="text-muted-foreground">در خدمت رفسنجانی‌های عزیز</div>
+                  <b className="text-sm">{t("home.about.badgeTitle")}</b>
+                  <div className="text-muted-foreground">{t("home.about.badgeSubtitle")}</div>
                 </div>
               </div>
             </Card>
@@ -1547,15 +1529,15 @@ export function HomeView() {
         <Reveal>
         <SectionHeading
           icon={HelpCircle}
-          title="سوالات متداول"
-          subtitle="پاسخ کوتاه و روشن برای پرتکرارترین سوال‌های شما — سوالی مانده؟ از هوش نخل بپرسید!"
+          title={t("home.faq.title")}
+          subtitle={t("home.faq.subtitle")}
           center
         />
         </Reveal>
         <Reveal delay={100}>
         <Card className="mt-7 gap-0 rounded-2xl px-3 py-2 sm:px-5">
           <Accordion type="single" collapsible className="w-full">
-            {FAQS.map((f, i) => (
+            {faqs.map((f, i) => (
               <AccordionItem key={i} value={`faq-${i}`}>
                 <AccordionTrigger className="text-right text-sm font-extrabold sm:text-base">{f.q}</AccordionTrigger>
                 <AccordionContent className="text-xs leading-7 text-muted-foreground sm:text-sm">{f.a}</AccordionContent>
@@ -1569,7 +1551,7 @@ export function HomeView() {
       {/* ============ CONTACT ============ */}
       <section id="contact" className="mx-auto max-w-6xl scroll-mt-28 px-4 py-12">
         <Reveal>
-        <SectionHeading icon={Phone} title="تماس با ما" subtitle="منتظر دیدارتان در رستوران نخل رفسنجان هستیم" />
+        <SectionHeading icon={Phone} title={t("home.contact.title")} subtitle={t("home.contact.subtitle")} />
         </Reveal>
         <div className="mt-7 grid grid-cols-1 gap-4 sm:grid-cols-3">
           {[
@@ -1639,9 +1621,9 @@ export function HomeView() {
           <div className="palm-pattern absolute inset-0 opacity-15" aria-hidden />
           <div className="relative">
             <Bot className="mx-auto mb-4 h-14 w-14" />
-            <h2 className="text-2xl font-black md:text-3xl">گرسنه‌ای؟ همین حالا شروع کن!</h2>
+            <h2 className="text-2xl font-black md:text-3xl">{t("home.cta.title")}</h2>
             <p className="mx-auto mt-3 max-w-lg text-sm leading-7 opacity-90">
-              هوش نخل منتظرته تا مثل یک دوست، سفارشت رو بگیره. از سلام کردن شروع کن — بقیه‌ش با ما!
+              {t("home.cta.subtitle")}
             </p>
             <Button
               onClick={goChat}
@@ -1649,7 +1631,7 @@ export function HomeView() {
               className="mt-6 h-14 rounded-2xl bg-white px-8 text-base font-black text-primary shadow-xl transition-transform hover:scale-105"
             >
               <Bot className="ml-2 h-6 w-6" />
-              ورود به گفتگو با هوش نخل
+              {t("home.cta.button")}
             </Button>
           </div>
         </div>

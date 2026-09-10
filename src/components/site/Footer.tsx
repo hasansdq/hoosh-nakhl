@@ -1,11 +1,13 @@
 "use client";
 
 import { useAppStore } from "@/lib/store";
+import { useContent } from "@/lib/use-content";
 import { NakhlLogo, AdminLink, prettyPhone } from "./Header";
-import { Instagram, Send, MapPin, Phone, Clock, Heart, ShieldCheck, CreditCard, Timer, Mail } from "lucide-react";
+import { Instagram, Send, MapPin, Phone, Clock, ShieldCheck, CreditCard, Timer, Mail } from "lucide-react";
 
 export function SiteFooter() {
   const { setView, user, setAuthOpen, siteSettings } = useAppStore();
+  const { t } = useContent();
 
   const go = (v: "home" | "chat" | "cart" | "track" | "orders" | "profile") => {
     if ((v === "chat" || v === "orders" || v === "profile") && !user) {
@@ -44,7 +46,7 @@ export function SiteFooter() {
             <p className="mt-4 text-sm leading-7 text-muted-foreground">{siteSettings.aboutText}</p>
             {(instagramUrl || telegramUrl) && (
               <div className="mt-4 flex items-center gap-2">
-                <span className="text-xs font-bold text-muted-foreground">ما را دنبال کنید:</span>
+                <span className="text-xs font-bold text-muted-foreground">{t("footer.followUs")}</span>
                 {instagramUrl && (
                   <a
                     href={instagramUrl}
@@ -73,7 +75,7 @@ export function SiteFooter() {
 
           {/* quick links */}
           <div>
-            <h3 className="mb-4 text-sm font-bold">دسترسی سریع</h3>
+            <h3 className="mb-4 text-sm font-bold">{t("footer.quickLinksTitle")}</h3>
             <ul className="space-y-2.5 text-sm text-muted-foreground">
               <li><button onClick={() => go("home")} className="transition hover:text-primary">صفحه اصلی</button></li>
               <li><button onClick={() => go("chat")} className="transition hover:text-primary">سفارش با هوش نخل</button></li>
@@ -87,7 +89,7 @@ export function SiteFooter() {
 
           {/* contact (CMS) */}
           <div>
-            <h3 className="mb-4 text-sm font-bold">تماس با ما</h3>
+            <h3 className="mb-4 text-sm font-bold">{t("footer.contactTitle")}</h3>
             <ul className="space-y-3 text-sm text-muted-foreground">
               <li className="flex items-start gap-2">
                 <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
@@ -121,22 +123,22 @@ export function SiteFooter() {
         <div className="mt-8 grid grid-cols-1 gap-3 rounded-2xl border bg-background/60 p-4 sm:grid-cols-3">
           <div className="flex items-center justify-center gap-2 text-xs font-semibold text-muted-foreground">
             <ShieldCheck className="h-4 w-4 text-primary" />
-            پرداخت امن از طریق درگاه زرین‌پال
+            {t("footer.trustPayment")}
           </div>
           <div className="flex items-center justify-center gap-2 text-xs font-semibold text-muted-foreground">
             <CreditCard className="h-4 w-4 text-primary" />
-            پشتیبانی {siteSettings.workingHours}
+            {t("footer.trustSupport")}
           </div>
           <div className="flex items-center justify-center gap-2 text-xs font-semibold text-muted-foreground">
             <Timer className="h-4 w-4 text-primary" />
-            ارسال سریع در سراسر {siteSettings.city}
+            {t("footer.trustDelivery")}
           </div>
         </div>
 
         <div className="mt-6 flex flex-col items-center justify-between gap-3 border-t pt-6 text-xs text-muted-foreground sm:flex-row">
-          <span>© ۱۴۰۵ {siteSettings.restaurantName} {siteSettings.city} — تمامی حقوق محفوظ است.</span>
+          <span>{t("footer.copyright")}</span>
           <span className="flex items-center gap-1">
-            ساخته شده با <Heart className="h-3.5 w-3.5 text-red-500" /> و هوش مصنوعی
+            {t("footer.madeWith")}
           </span>
         </div>
       </div>
