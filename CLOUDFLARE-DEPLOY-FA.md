@@ -118,3 +118,15 @@ bun run deploy        # = cf:build (بیلد OpenNext) + opennextjs-cloudflare d
 | WebSocket وصل نمی‌شود | `ADMIN_NOTIFY_KEY` در secret با مقدار پنل یکسان است؟ (`wrangler secret list`) |
 | پرداخت واقعی نمی‌شود | پنل → پرداخت: sandbox/simulation خاموش + ZARINPAL_FORCE_REAL=1 |
 | OTP ارسال نمی‌شود | پنل → پیامک: provider و کلیدها؛ در تست لوکال devCode نمایش داده می‌شود |
+
+## ۱۰) استقرار در z-space (پیش‌نمایش z.ai) — معماری یکسان با Cloudflare
+
+خط‌لوله‌ی استقرار z-space (اسکریپت‌های `.zscripts/` که پلتفرم اجرا می‌کند) پس از مهاجرت Cloudflare بازنویسی شده و **دقیقاً همان worker پروداکشن را روی workerd اجرا می‌کند**:
+
+- **بیلد** (`.zscripts/build.sh`): `bun install` → `bun run cf:build` (همان بیلد OpenNext) → بسته‌بندی: `.open-next/` (worker خودکفا + assets) + `src/worker.js` + `src/do/realtime.ts` (ورودی DO/WS) + `wrangler.jsonc` + `migrations/` + `seed/` + `runtime/` (ابزار wrangler/workerd که در زمان بیلد نصب و داخل بسته می‌آید — سردِ‌استارتِ کانتینر بدون شبکه) + `start.sh` + `Caddyfile` → یک فایل `tar.gz` (~۷۹MB).
+- **اجرا** (`.zscripts/start.sh`): `wrangler d1 migrations apply DB --local` + seed (idempotent) → `wrangler dev` روی `127.0.0.1:3000` (workerd + D1/R2/DO محلی؛ حلقه‌ی supervisor برای خودترمیمی) → Caddy گیت‌وی `:81 → :3000` (پیش‌زمینه).
+- **Realtime**: همان Durable Object `NakhlRealtime` — بدون mini-service/Socket.IO.
+- **تنظیمات z**: seed با `settings-dev.sql` (OTP توسعه قابل مشاهده → قابل تست کامل؛ معادل رفتار قبلی که دیتابیس dev سندباکس را بسته‌بندی می‌کرد). پروداکشن واقعی Cloudflare → بخش ۶ همین سند.
+- تست‌شده به‌صورت E2E روی بسته‌ی خروجی: صفحه‌ها/API/D1/favicon/assets/R2-route/ارتقای WebSocket ‏۱۰۱ به DO — همه سبز.
+
+> نکته: دیگر `output: "standalone"` وجود ندارد؛ گارد قدیمی build.sh که به‌دلیل کامنتِ فایلِ next.config به‌اشتباه fail می‌شد، با حذف آن مسیر و بازنویسی کامل بیلد رفع شد.

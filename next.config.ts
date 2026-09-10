@@ -32,9 +32,10 @@ if (process.env.NEXT_PHASE !== "phase-production-build") {
 const isCloudflareBuild = process.env.NEXT_PUBLIC_CF_BUILD === "1";
 
 const nextConfig: NextConfig = {
-  // NOTE: no `output: "standalone"` — that was the Node/Docker deployment
-  // path. The Cloudflare Workers build produces its own artifact under
-  // `.open-next/`.
+  // NOTE: this project deploys to Cloudflare Workers — the Node/Docker
+  // standalone output mode was removed with that migration. The Workers
+  // artifact (fully self-contained) is produced by `bun run cf:build`
+  // under `.open-next/`.
   reactStrictMode: false,
   poweredByHeader: false,
   compress: true,
