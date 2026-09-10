@@ -1153,3 +1153,30 @@ Stage Summary (تأییدها):
 - نکته‌ها: پیش‌فرض‌ها مرجع کد هستند (نبود ردیف = پیش‌فرض)؛ برای دیپلوی CF واقعی: migrations/0002 خودکار با db:migrate:remote اعمال می‌شود؛ بستهٔ z-space هم migrations/ را شامل می‌شود
 - باگ رفع‌شده جانبی: MenuManager → آپلود تصویر آیتم منو حالا به /api/admin/upload (معتبر) می‌رود
 - بک‌لاگ معتبر: Web Push، نظرات عمومی، ریسپانسیو ادمین، گسترش CMS به CartView/TrackView/پروفایل در فاز بعدی
+
+---
+Task ID: docker-1
+Agent: Z.ai Code (main)
+Task: داکرایز حرفه‌ای کامل پروژه برای دیپلوی روی VPS با دایرکت‌ادمین/آپاچی — بدون تصاحب پورت‌های 80/443، با حفظ مطلق داده‌ها در ری‌دیپلوی (درخواست کاربر)
+
+Work Log:
+- مرور عمیق: db.ts/cf.ts/uploads/realtime/notify/DO/notify-service/migrations/seed/auth (سشن‌ها DB-اند، بدون AUTH_SECRET) + بازیابی مرجع Dockerfile قدیمی از git (23e748f)
+- معماری دو-رانتایم: انتخابگر رانتایم در db.ts (D1 در Workers/Miniflare، libsql/SQLite محلی با NAKHL_SQLITE_PATH در Node) و uploads (R2 در Workers، فایل‌سیستم با NAKHL_UPLOADS_DIR در Node) — قرارداد عمومی یکسان (/f/<key>)، کلاینت‌ها بی‌خبر از بک‌اند
+- وابستگی‌ها: @libsql/client@0.18.0 + @prisma/adapter-libsql@6.19.3 (پین‌شده هم‌نسخ با prisma 6.19.2) + socket.io@4.8.3 در deps
+- next.config: حالت NAKHL_DOCKER_BUILD=1 → output:standalone + outputFileTracingExcludes برای دایرکتوری‌های سندباکس و .env (trace از ۱۴۰۱ فایل به ۵۹)
+- جنگ باندلرها (یافتهٔ کلیدی فاز): Turbopack (پیش‌فرض Next 16) import(expr) غیر literal را stub می‌کند («expression is too dynamic»)، const در سطح ماژول را fold می‌کند، createRequire از import destructured را track می‌کند؛ esbuild/OpenNext ایمپورت literal را inline می‌کند. حل نهایی: process.getBuiltinModule("module") + createRequire + id پیوسته — فراخوانی متد ساده که همهٔ باندلرها/trace ها عبور می‌دهند (تأیید با route-پروب زنده). z-ai-web-dev-sdk هم با همین الگو (۲.۶۷MB) از باندل کارگر حذف شد
+- docker/: app-server.js (بوت رسمی Next 16 با getRequestHandlers + required-server-files + __NEXT_PRIVATE_STANDALONE_CONFIG؛ socket.io روی /api/ws با پروتکل کامل DO؛ POST /emit محافظت‌شده با x-notify-key؛ دیسپچر تک-لیسنری؛ graceful shutdown با closeAllConnections) · entrypoint.sh (بوت‌استرپ secrets.env — ADMIN_NOTIFY_KEY تولید یک‌بارهٔ پایدار در volume — → migrate → seed → exec) · migrate.mjs (forward-only، تراکنشی، جدول _nakhl_migrations، WAL) · seed.mjs (فیلتر INSERT ادمینِ دمو + بوت‌استرپ ادمین از env یا رمز تصادفی ۶۰۰ در data/initial-admin-credentials.txt؛ scrypt هم‌فرمت auth.ts) · backup.mjs (VACUUM INTO + retention) · restore.mjs (پیش‌چک قفل + صحت اسکیمای نخل + نسخهٔ pre-restore)
+- Dockerfile چندمرحله‌ای: oven/bun:1 (install → prisma generate → next build standalone → merge runtime-deps پین‌شده) → node:22-slim (غیر-root USER node، هرس junk های trace + .env از standalone، HEALTHCHECK با fetch /api/health، VOLUME /app/data) + docker-compose.yml (port 127.0.0.1:${NAKHL_PORT:-8080}:3000، cap_drop ALL، no-new-privileges، log rotation، healthcheck، env_file ریشه) + .dockerignore جامع + docker/env.example + deploy/update/backup/restore.sh + directadmin/nakhl-proxy.conf (ProxyPass برای / و /api/ws با wss + X-Forwarded-Proto + LimitRequestBody)
+- سند کامل DOCKER-DEPLOY-FA.md (معماری، جدول حفاظت داده‌ها، نصب داکر، استقرار اولیه، Custom HTTPD دایرکت‌ادمین + SSL، عملیات روزمره، مرجع .env، امنیت، رفع اشکال، مرجع فنی)
+- eslint: override برای docker/** (CJS مجاز)
+
+Stage Summary (تأییدهای زنده — شبیه‌سازی کامل Docker در سندباکس، بدون docker daemon):
+- ✅ بیلد standalone + بوت node app-server.js: / ۲۰۰ فارسی، /api/health db:up (پراسمای engineless + PrismaLibSQL روی SQLite محلی)، /api/menu کامل، /nk-admin، فاوآیکون/لوگو/تصاویر
+- ✅ E2E مدیریت: ورود با ADMIN_PASSWORD از env و با رمز تصادفی (فایل ۶۰۰)؛ آپلود → دیسک → سرو بایت‌به‌بایت از /f/ با immutable cache؛ /_next/image با sharp (۱۴۹KB→۱۲.۵KB)
+- ✅ E2E مشتری کامل: OTP (با EXPOSE_DEV_CODE) → ثبت‌نام → آدرس → checkout (442,000 تومان، قیمت از DB) → شبیه‌سازی پرداخت PAID → broadcast «order:new-paid» به ادمینِ متصل از طریق /api/ws + /emit (recipients:1) — پروتکل یکسان با DO
+- ✅ ری‌دیپلوی: خاموشی graceful (SIGTERM → log تمیز) → migrate no-op → seed: «1 existing admin preserved» → تنظیمات تغییر‌یافته و CMS و ۳۰ آیتم منو همگی دست‌نخورده؛ تست حتی با سرورِ زنده هم پاس شد
+- ✅ فاجعه+بازیابی: DELETE همه → restore از snapshot → بازگشت کامل (پیش‌چک قفل SQLITE_BUSY با پیام واضح اضافه شد)
+- ✅ بیلد Cloudflare سبز: «Worker saved 🚀» — libsql و z-ai کاملاً از باندل حذف شدند؛ Total Upload از ۱۳.۴MB/gzip ۳.۵MB (بالای سقف پلن رایگان!) به ۱۱.۱MB/gzip ۲.۶۴MB رسید (زیر سقف ۳MB)؛ .open-next از ۱۱۲MB به ۴۲MB
+- ✅ typecheck و lint صفر خطا؛ استک سندباکس dev برگشت (health db:up با D1/Miniflare — دو-رانتایم هم‌زمان سالم)
+- نکته‌ها: در VPS فقط `cp docker/env.example .env` → `bash docker/deploy.sh`؛ آپاچی DA از قالب directadmin؛ به‌روزرسانی: `bash docker/update.sh` (بک‌اپ خودکار اول)؛ هرگز `down -v`
+- بک‌لاگ معتبر: Web Push، نظرات عمومی، ریسپانسیو ادمین، گسترش CMS به صفحات دیگر

@@ -73,14 +73,39 @@ export async function chatCompletion(
   // ---- Built-in ZAI engine ----
   if (settings.provider === "zai") {
     try {
-      // The "zai" engine only exists inside the z.ai sandbox runtime (Node).
-      // A computed module specifier keeps bundlers from embedding this
-      // Node-only SDK into the Cloudflare Workers bundle — on Workers the
-      // import simply fails and we return a provider error below (production
-      // databases seed `openrouter` as the default provider, which is pure
-      // fetch and works everywhere).
-      const moduleId = "z-ai-web-dev-sdk";
-      const { default: ZAI } = await import(/* webpackIgnore: true */ moduleId);
+      // Node-only SDK — loaded through process.getBuiltinModule + createRequire
+      // so that NO bundler in either deployment pipeline can statically
+      // resolve it:
+      //  • Turbopack stubs non-literal `import(expr)` ("expression is too
+      //    dynamic") and also tracks createRequire from a destructured
+      //    `await import("node:module")` — both get stubbed.
+      //  • process.getBuiltinModule(...) is a plain method call that every
+      //    bundler/tracer passes through untouched (verified with a live
+      //    build probe). On self-hosted Node (Docker/VPS, node:22 image) the
+      //    SDK resolves from the image's node_modules; on Workers this branch
+      //    fails gracefully into the provider error below (production
+      //    databases seed `openrouter` as the default provider, which is pure
+      //    fetch and works everywhere).
+      const nodeModule = process.getBuiltinModule?.("module") as
+        | { createRequire?: (url: string) => NodeRequire }
+        | undefined;
+      const nodeRequire = nodeModule?.createRequire?.(import.meta.url);
+      if (!nodeRequire) {
+        throw new Error("Node runtime without process.getBuiltinModule");
+      }
+      const sdkModuleId = ["z-ai-web-dev-", "sdk"].join("");
+      const sdkModule = nodeRequire(sdkModuleId) as { default?: unknown } & Record<string, unknown>;
+      const ZAI = (sdkModule.default ?? sdkModule) as {
+        create: () => Promise<{
+          chat: {
+            completions: {
+              create: (args: unknown) => Promise<{
+                choices?: { message?: { content?: string } }[];
+              }>;
+            };
+          };
+        }>;
+      };
       const zai = await ZAI.create();
       const mapped = messages.map((m) => ({
         role: m.role === "assistant" ? ("assistant" as const) : (m.role as "user" | "system"),
@@ -90,7 +115,7 @@ export async function chatCompletion(
         messages: mapped,
         thinking: { type: "disabled" },
       });
-      const content = completion.choices[0]?.message?.content ?? "";
+      const content = completion.choices?.[0]?.message?.content ?? "";
       if (!content.trim()) {
         return { success: false, content: "", error: "پاسخ خالی از موتور هوش مصنوعی", provider: "zai", model };
       }

@@ -1,0 +1,92 @@
+# =============================================================================
+# Nakhl Restaurant — Docker Compose (production · VPS with DirectAdmin)
+# -----------------------------------------------------------------------------
+# One service, one process, one persistent volume:
+#
+#   app  → Node.js standalone server (web + realtime + uploads)  :3000
+#          published to 127.0.0.1:${NAKHL_PORT:-8080} on the HOST.
+#
+# The VPS runs DirectAdmin/Apache which OWNS ports 80/443 — this stack never
+# binds them. Apache reverse-proxies the domain to 127.0.0.1:8080
+# (see docker/directadmin/nakhl-proxy.conf + DOCKER-DEPLOY-FA.md).
+#
+# Quick start:
+#   cp docker/env.example .env     # adjust NAKHL_PORT / ADMIN_* / TZ
+#   docker compose up -d --build
+#   curl http://127.0.0.1:8080/api/health
+#
+# DATA SAFETY — the database, uploads, secrets and backups live in the named
+# volume «nakhl-data». Rebuilding the image, `docker compose up -d` and
+# `docker compose down` NEVER delete it. The only commands that do:
+#   docker compose down -v     ← DO NOT RUN
+#   docker volume rm …nakhl-data ← DO NOT RUN
+# Regular backups: ./docker/backup.sh (see docker/restore.sh to roll back).
+# =============================================================================
+
+name: nakhl-restaurant
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        # baked into the browser bundle — socket.io endpoint behind the proxy
+        NEXT_PUBLIC_SOCKET_PATH: /api/ws
+    image: nakhl-restaurant:latest
+    container_name: nakhl-app
+    restart: unless-stopped
+
+    # single .env at the repo root (compose reads it for BOTH variable
+    # substitution below and the container environment)
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      # ---- runtime layout (matches the Dockerfile defaults; explicit for clarity)
+      NAKHL_DATA_DIR: /app/data
+      NAKHL_SQLITE_PATH: /app/data/nakhl.db
+      NAKHL_UPLOADS_DIR: /app/data/uploads
+      NAKHL_MIGRATIONS_DIR: /app/migrations
+      NAKHL_SEED_DIR: /app/seed
+      # in-process push channel (docker/app-server.js serves POST /emit)
+      NAKHL_NOTIFY_URL: http://127.0.0.1:3000/emit
+      # production-safe seeding profile (dev = visible OTP, only for testing!)
+      NAKHL_SEED_PROFILE: ${NAKHL_SEED_PROFILE:-prod}
+      # sandbox-only supervisor must never wake up in production
+      NAKHL_SUPERVISE_DEV: "0"
+      TZ: ${TZ:-Asia/Tehran}
+
+    # host binding is loopback-only: the ONLY ingress is the Apache vhost
+    # (DirectAdmin). Direct access from the internet is impossible.
+    ports:
+      - "127.0.0.1:${NAKHL_PORT:-8080}:3000"
+
+    volumes:
+      - nakhl-data:/app/data
+
+    # container-level healthcheck comes from the Dockerfile (/api/health
+    # pings SQLite). Give the first boot enough time for migrate+seed.
+    healthcheck:
+      start_period: 60s
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+    # ---- hardening ----
+    # non-root user (image) + no privilege escalation + no Linux capabilities
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # graceful shutdown window (SIGTERM → app closes io/http, exits 0)
+    stop_grace_period: 30s
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  nakhl-data:

@@ -1,21 +1,25 @@
 import "server-only";
 import { db } from "@/lib/db";
-import { getCloudflareEnv } from "@/lib/cf";
+import { getCloudflareEnv, isWorkersRuntime, type R2Bucket } from "@/lib/cf";
+import { fsDeleteUpload, fsGetUpload, fsPutUpload, fsUploadsConfigured } from "@/lib/uploads/fs-store";
 
 /**
- * Nakhl Restaurant — image uploads on Cloudflare R2
- * --------------------------------------------------
- * Storage backend: the R2 bucket bound as `R2` in wrangler.jsonc (also
- * available in local `next dev` through Miniflare — persistent state under
- * `.wrangler/state`). Stored objects are served by the route handler at
- * `/f/[...key]` (see src/app/f/[...key]/route.ts), which streams bytes from
- * R2 with immutable-cache headers.
+ * Nakhl Restaurant — image uploads (dual storage backend)
+ * --------------------------------------------------------
+ * • Cloudflare (production + local `next dev` via Miniflare): the R2 bucket
+ *   bound as `R2` in wrangler.jsonc. Objects are streamed to browsers by the
+ *   route handler at `/f/[...key]` with immutable-cache headers.
  *
- * Validation (type allow-list + 5MB cap) matches the previous filesystem
- * implementation; the sharp re-encode pipeline of the sandbox build was a
- * Node-only optimization step and is intentionally not part of the
- * Cloudflare runtime — files are stored as received (dimensions/quality
- * unchanged).
+ * • Docker / VPS (Node standalone): when `NAKHL_UPLOADS_DIR` is set (done by
+ *   docker/entrypoint.sh → /app/data/uploads on the persistent volume), the
+ *   same public contract is served from the local filesystem via
+ *   src/lib/uploads/fs-store.ts. Keys, URLs (`/f/<key>`), validation and the
+ *   DB record are identical across both backends, so nothing downstream
+ *   (menu images, avatars, CMS content images) ever needs to know which
+ *   backend is active.
+ *
+ * Validation (type allow-list + 5MB cap) is backend-independent; files are
+ * stored as received (dimensions/quality unchanged).
  */
 
 const MAX_SIZE = 5 * 1024 * 1024; // 5MB
@@ -36,7 +40,7 @@ const EXTENSION_BY_TYPE: Record<string, string> = {
   "image/avif": "avif",
 };
 
-/** URL prefix under which stored R2 objects are served. */
+/** URL prefix under which stored objects are served (both backends). */
 export const UPLOAD_URL_PREFIX = "/f/";
 
 export interface UploadResult {
@@ -49,7 +53,28 @@ export interface UploadResult {
 
 export type ImageKind = "food" | "avatar" | "general";
 
-/** Extract the R2 object key from a stored upload URL (`/f/<key>` or legacy `/uploads/<file>`). */
+// ---------------------------------------------------------------------------
+// Storage backend selection
+// ---------------------------------------------------------------------------
+
+type StorageBackend =
+  | { kind: "r2"; bucket: R2Bucket }
+  | { kind: "fs" };
+
+/**
+ * Resolve the active storage backend:
+ *  1. R2 binding present (Workers / Miniflare dev) → R2;
+ *  2. NAKHL_UPLOADS_DIR set and not on workerd → Node filesystem (Docker);
+ *  3. otherwise → null (callers return a clean API error).
+ */
+async function getStorage(): Promise<StorageBackend | null> {
+  const env = await getCloudflareEnv();
+  if (env?.R2) return { kind: "r2", bucket: env.R2 };
+  if (!isWorkersRuntime() && fsUploadsConfigured()) return { kind: "fs" };
+  return null;
+}
+
+/** Extract the storage key from a stored upload URL (`/f/<key>` or legacy `/uploads/<file>`). */
 function keyFromUrl(url: string): string | null {
   if (url.startsWith(UPLOAD_URL_PREFIX)) {
     return url.slice(UPLOAD_URL_PREFIX.length) || null;
@@ -61,10 +86,14 @@ function keyFromUrl(url: string): string | null {
   return null;
 }
 
+// ---------------------------------------------------------------------------
+// Public API — save / delete (used by the upload routes)
+// ---------------------------------------------------------------------------
+
 /**
- * Store an uploaded image in R2 and record it in the database.
- * Avatars and food images keep their original bytes; the key embeds the
- * kind and a random UUID (collision-free, immutable-cache friendly).
+ * Store an uploaded image and record it in the database.
+ * Keys embed the kind and a random UUID (collision-free, immutable-cache
+ * friendly) — identical on both backends.
  */
 export async function saveImageUpload(
   file: File,
@@ -82,12 +111,12 @@ export async function saveImageUpload(
       return { success: false, error: "فرمت فایل مجاز نیست (JPG، PNG، WebP، GIF)" };
     }
 
-    const env = await getCloudflareEnv();
-    const bucket = env?.R2;
-    if (!bucket) {
+    const storage = await getStorage();
+    if (!storage) {
       return {
         success: false,
-        error: "فضای ذخیره‌سازی R2 در دسترس نیست (اتصال binding «R2» را بررسی کنید)",
+        error:
+          "فضای ذخیره‌سازی در دسترس نیست (در کلادفلر binding «R2» و در داکر متغیر NAKHL_UPLOADS_DIR را بررسی کنید)",
       };
     }
 
@@ -95,12 +124,16 @@ export async function saveImageUpload(
     const key = `${kind}-${crypto.randomUUID()}.${extension}`;
     const bytes = new Uint8Array(await file.arrayBuffer());
 
-    await bucket.put(key, bytes, {
-      httpMetadata: {
-        contentType: file.type,
-        cacheControl: "public, max-age=31536000, immutable",
-      },
-    });
+    if (storage.kind === "r2") {
+      await storage.bucket.put(key, bytes, {
+        httpMetadata: {
+          contentType: file.type,
+          cacheControl: "public, max-age=31536000, immutable",
+        },
+      });
+    } else {
+      await fsPutUpload(key, bytes);
+    }
 
     const url = `${UPLOAD_URL_PREFIX}${key}`;
     await db.upload.create({
@@ -122,7 +155,7 @@ export async function saveImageUpload(
   }
 }
 
-/** Delete an uploaded file by URL (admin) — removes the R2 object and its DB row. */
+/** Delete an uploaded file by URL (admin) — removes the object and its DB row. */
 export async function deleteUploadByUrl(url: string): Promise<boolean> {
   try {
     const key = keyFromUrl(url);
@@ -131,16 +164,58 @@ export async function deleteUploadByUrl(url: string): Promise<boolean> {
     const record = await db.upload.findFirst({ where: { url } });
     if (!record) return false;
 
-    const env = await getCloudflareEnv();
-    const bucket = env?.R2;
-    if (bucket) {
-      await bucket.delete(key);
+    const storage = await getStorage();
+    if (storage?.kind === "r2") {
+      await storage.bucket.delete(key);
+    } else if (storage?.kind === "fs") {
+      await fsDeleteUpload(key);
     } else {
-      console.warn("[uploads] R2 binding missing — deleted the DB row only");
+      console.warn("[uploads] no storage backend — deleted the DB row only");
     }
     await db.upload.delete({ where: { id: record.id } });
     return true;
   } catch {
     return false;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Public API — read (used by the /f/[...key] route)
+// ---------------------------------------------------------------------------
+
+export interface StoredObject {
+  /** R2 → response stream; filesystem → in-memory bytes (≤5MB by policy). */
+  body: ReadableStream | Uint8Array;
+  contentType: string;
+  size: number;
+  etag?: string;
+}
+
+/**
+ * Fetch a stored object by its validated key for the `/f/` route.
+ * Returns null when the object does not exist.
+ */
+export async function getStoredObject(key: string): Promise<StoredObject | null> {
+  const storage = await getStorage();
+  if (!storage) return null;
+
+  if (storage.kind === "r2") {
+    const object = await storage.bucket.get(key);
+    if (!object || !object.body) return null;
+    return {
+      body: object.body,
+      contentType: object.httpMetadata?.contentType ?? "application/octet-stream",
+      size: object.size,
+      etag: object.httpEtag,
+    };
+  }
+
+  const file = await fsGetUpload(key);
+  if (!file) return null;
+  return {
+    body: file.bytes,
+    contentType: file.contentType,
+    size: file.bytes.byteLength,
+    etag: undefined,
+  };
 }

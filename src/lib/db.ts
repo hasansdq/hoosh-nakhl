@@ -1,15 +1,23 @@
 import "server-only";
 import { PrismaClient } from "@/generated/prisma/client";
-import { getCloudflareEnv } from "@/lib/cf";
+import { getCloudflareEnv, isWorkersRuntime } from "@/lib/cf";
 
 /**
- * Nakhl Restaurant — Prisma client for Cloudflare D1
- * ---------------------------------------------------
+ * Nakhl Restaurant — Prisma client (dual deployment runtime)
+ * ----------------------------------------------------------
  * The generated client (prisma schema `runtime = "workerd"`) is fully
  * engineless: queries are compiled by an inlined WebAssembly compiler and
- * executed through a driver adapter. On Cloudflare (and in local `next dev`
- * via Miniflare) the adapter is `@prisma/adapter-d1`, wired to the `DB`
- * binding declared in wrangler.jsonc.
+ * executed through a driver adapter. The backend is selected per runtime:
+ *
+ *  • Cloudflare Workers (and local `next dev` via Miniflare): the adapter is
+ *    `@prisma/adapter-d1`, wired to the `DB` binding declared in wrangler.jsonc.
+ *
+ *  • Docker / VPS (Node standalone): when `NAKHL_SQLITE_PATH` is set (set by
+ *    docker/entrypoint.sh — the file lives on the persistent `nakhl-data`
+ *    volume), the adapter is `@prisma/adapter-libsql` over a local SQLite
+ *    file. Both adapter modules are loaded through non-literal, bundler-
+ *    excluded dynamic imports so the Cloudflare worker bundle never includes
+ *    them (same proven pattern as src/lib/ai/index.ts).
  *
  * Because module top-level code cannot `await` the async Cloudflare context,
  * `db` is a lazily-initialized proxy: any method call resolves the real
@@ -29,15 +37,45 @@ async function createPrismaClient(): Promise<PrismaClient> {
   const env = await getCloudflareEnv();
   const d1 = env?.DB;
 
-  if (!d1) {
-    throw new Error(
-      "D1 binding «DB» is not available. In production it is declared in wrangler.jsonc " +
-        "(d1_databases); in local `next dev` it is provided by initOpenNextCloudflareForDev() (Miniflare).",
-    );
+  if (d1) {
+    const { PrismaD1 } = await import("@prisma/adapter-d1");
+    return new PrismaClient({ adapter: new PrismaD1(d1) });
   }
 
-  const { PrismaD1 } = await import("@prisma/adapter-d1");
-  return new PrismaClient({ adapter: new PrismaD1(d1) });
+  // ---- Docker / VPS (Node standalone) — local SQLite via libsql ----------
+  // The adapter creates the underlying @libsql/client connection itself
+  // from this config; the SQLite file lives on the persistent data volume.
+  //
+  // Loading strategy (matters for BOTH deployment targets):
+  //  • Turbopack compiles non-literal `import(expr)` in server code into a
+  //    throwing "Cannot find module as expression is too dynamic" stub, and
+  //    it also tracks `createRequire` obtained through a destructured
+  //    `await import("node:module")` — both approaches get stubbed.
+  //  • `process.getBuiltinModule("module")` is a plain method call: Turbopack
+  //    leaves the whole chain untouched (verified with a live build probe),
+  //    OpenNext's esbuild sees nothing resolvable, and the file tracer does
+  //    not fall back to whole-repo globs. On Node (≥22.3, our node:22 image)
+  //    it resolves the real module at runtime; on workerd the branch is
+  //    unreachable (guards above) so it is never evaluated.
+  const sqlitePath = process.env.NAKHL_SQLITE_PATH;
+  if (sqlitePath && !isWorkersRuntime()) {
+    const nodeModule = process.getBuiltinModule?.("module") as
+      | { createRequire?: (url: string) => NodeRequire }
+      | undefined;
+    const nodeRequire = nodeModule?.createRequire?.(import.meta.url);
+    if (!nodeRequire) {
+      throw new Error("Node runtime without process.getBuiltinModule — use the node:22 Docker image");
+    }
+    const adapterModuleId = ["@prisma/adapter-", "libsql"].join("");
+    const { PrismaLibSQL } = nodeRequire(adapterModuleId) as typeof import("@prisma/adapter-libsql");
+    return new PrismaClient({ adapter: new PrismaLibSQL({ url: `file:${sqlitePath}` }) });
+  }
+
+  throw new Error(
+    "No database backend available. Cloudflare deploys need the D1 binding «DB» " +
+      "(wrangler.jsonc d1_databases); Docker/VPS deploys need NAKHL_SQLITE_PATH " +
+      "(set automatically by docker/entrypoint.sh).",
+  );
 }
 
 function getClient(): Promise<PrismaClient> {

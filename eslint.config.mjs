@@ -44,6 +44,13 @@ const eslintConfig = [...nextCoreWebVitals, ...nextTypescript, {
     "no-useless-escape": "off",
   },
 }, {
+  // Docker/VPS runtime scripts (docker/**) are plain Node CommonJS / ESM
+  // executed directly by the container — no bundler, no transpile, no React.
+  files: ["docker/**/*.js", "docker/**/*.mjs", "docker/**/*.cjs"],
+  rules: {
+    "@typescript-eslint/no-require-imports": "off",
+  },
+}, {
   ignores: ["node_modules/**", ".next/**", ".open-next/**", ".wrangler/**", "out/**", "build/**", "src/generated/**", "next-env.d.ts", "examples/**", "skills", "tool-results/**"]
 }];
 

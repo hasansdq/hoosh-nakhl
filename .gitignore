@@ -74,3 +74,6 @@ agent-browser-artifacts/
 /db/
 # per-service logs
 .zscripts/*.log
+
+# host-side backup copies (docker/backup.sh output)
+/backups/

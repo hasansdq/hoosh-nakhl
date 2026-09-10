@@ -1,0 +1,55 @@
+# =============================================================================
+# Nakhl Restaurant — Docker build context exclusions
+# -----------------------------------------------------------------------------
+# Everything the image needs comes from: package.json + bun.lock, prisma/,
+# src/, public/, migrations/, seed/, next.config.ts, tsconfig.json,
+# postcss/biome/eslint configs, and the docker/ runtime scripts below.
+# =============================================================================
+
+# --- VCS / meta ---
+.git
+.gitignore
+*.md
+
+# --- local tooling & secrets (NEVER bake into an image) ---
+.env
+.env.*
+!.env.example
+.dev.vars
+.dev.vars.*
+docker/env.example
+
+# --- dependency & build artifacts (rebuilt inside the image) ---
+node_modules
+.next
+.open-next
+.wrangler
+tsconfig.tsbuildinfo
+next-env.d.ts
+
+# --- sandbox-only services & platform scripts ---
+mini-services
+.zscripts
+agent-ctx
+skills
+examples
+qa
+download
+tool-results
+dev.log
+*.log
+
+# --- runtime data (belongs to the volume, not the image) ---
+db
+docker/backups
+
+# --- misc repo files not needed at runtime ---
+scripts
+Caddyfile
+wrangler.jsonc
+wrangler.toml
+open-next.config.ts
+.dev.vars.example
+.dockerignore
+docker-compose.yml
+Dockerfile
