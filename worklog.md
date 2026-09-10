@@ -1099,3 +1099,29 @@ Stage Summary (تأییدها):
 - ✅ استک کامل برگشت: GET / ‏۲۰۰، health db:up، notify-service زنده، lint صفر خطا
 - نکته: منبع طراحی فقط یک جاست — برای تغییر آیکون، فقط scripts/generate-favicons.ts را ویرایش و `bun run icons:generate` اجرا کنید
 - نکته: در دیپلوی واقعی Cloudflare هیچ کار اضافه لازم نیست — مسیرهای آیکون داخل worker باندل می‌شوند
+
+---
+Task ID: zdeploy-1
+Agent: Z.ai Code (main)
+Task: رفع مشکل بیلد و دیپلوی پروژه در z-space (درخواست کاربر)
+
+Work Log:
+- تشخیص قطعیِ **علت شکست بیلد**: گارد self-heal در .zscripts/build.sh بعد از `bun run build` (که دیگر standalone تولید نمی‌کند — معماری CF) دنبال `.next/standalone/server.js` می‌گشت و regex آن `output\s*:\s*standalone` را روی **کامنتِ** next.config.ts (خط «NOTE: no `output: "standalone"`...») match می‌کرد → خطای «standalone declared ولی server.js نیست» → exit 1
+- تشخیص **علت شکست runtime**: حتی با عبور از گارد، سرور standalone نود بدون bindingهای D1/R2/DO نمی‌تواند بالا بیاید (db.ts خطای صریح می‌دهد) — مسیر Node از ریشه با مهاجرت CF مرده بود
+- تأیید اینکه پلتفرم اسکریپت‌های repo را اجرا می‌کند: لاگ بوت ۱۰ سپتامبر نشان داد dev.sh ویرایش‌شدهٔ ما (گام D1 migrate+seed) اجرا شده → بازنویسی build.sh/start.sh مؤثر است
+- **بازنویسی .zscripts/build.sh**: bun install → `bun run cf:build` (همان worker پروداکشن OpenNext) → استیج: `.open-next/` + `src/worker.js` + `src/do/realtime.ts` (ورودی DO/WS — realtime.ts صفر import) + `wrangler.jsonc` دست‌نخورده (main=src/worker.js) + `migrations/` + `seed/` + `runtime/` (wrangler@4.127.1 + workerd نصب‌شده در زمان بیلد داخل بسته — سردِ‌استارت بدون شبکه) + `start.sh` + `Caddyfile` → tar.gz
+- حذف بloat پایتون: python-runtime-build.sh فایل‌های .py پوشهٔ skills (۸۹ فایل پلتفرم AI) را داخل بسته کپی می‌کرد → فراخوانی حذف شد (اپ JS/TS خالص)
+- **بازنویسی .zscripts/start.sh**: `wrangler d1 migrations apply DB --local` + seed سه‌فایلی idempotent (settings-dev برای پیش‌نمایش z — OTP توسعه قابل مشاهده، معادل رفتار قبلی) → `wrangler dev --ip 127.0.0.1 --port ${PORT:-3000}` داخل حلقهٔ supervisor (خودترمیمی، ری‌استارت ۵ ثانیه‌ای، لاگ web-server.log) → انتظار health حداکثر ۹۰s → `exec caddy` گیت‌وی :81
+- رفع next.config.ts: کامنت بازنویسی شد تا literal `output: "standalone"` (محرک کاذب گارد) از فایل حذف شود
+- تست کامل E2E روی بستهٔ استخراج‌شده (پورت ۳۱۰۰، الگوی orphan برای بقای بین فراخوانی‌های ابزار): migrate ‏۴۹ دستور + seed ‏۳۰ آیتم → `/` ‏۲۰۰ فارسی، `/api/health` ‏db:up، `/api/menu` کامل، `/nk-admin` ‏۲۰۰، `/favicon.ico` ‏۲۰۰، `/logo.svg`+`/icon-192.png` (assets binding) ‏۲۰۰، `/f/x` ‏۴۰۴ درست، **`/api/ws` ارتقای WebSocket ‏101 → Durable Object** ✓
+- بستهٔ نهایی تمیز: ۷۹MB، صفر فایل پایتون، ساختار ۱۰ فایلی + runtime
+- مستندسازی: بخش ۱۰ جدید در CLOUDFLARE-DEPLOY-FA.md (معماری z-space)
+- استک سندباکس کامل برگشت (notify-service → supervisor → next dev)، lint صفر خطا
+
+Stage Summary:
+- ✅ بیلد z-space: از «شکست قطعی در گارد standalone» به «بیلد موفق ۷۹MB worker خودکفا»
+- ✅ دیپلوی z-space: runtime = همان workerd + bindingهای پروداکشن (D1 محلی SQLite-backed، R2 محلی، DO) + گیت‌وی Caddy — دیگر هیچ مسیر Node/standalone/Socket.IO در دیپلوی نیست
+- ✅ خودترمیمی: supervisor در start.sh (ری‌استارت wrangler) + بوت idempotent (migrate+seed در هر ریبوت امن)
+- نکتهٔ RAM: در کانتینر z، wrangler+workerd چند صد مگابایت مصرف می‌کنند — اگر FC محدودیت سخت داشت، در فاز بعد cache کم‌مصرف‌تر بررسی شود
+- نکته: seed پیش‌نمایش = settings-dev (تست‌پذیری OTP)؛ برای تغییر به settings-prod فقط خط آخر start.sh عوض شود
+- بک‌لاگ قبلی معتبر: Web Push، نظرات عمومی، ریسپانسیو ادمین…
