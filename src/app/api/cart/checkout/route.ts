@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { ok, fail, requireUser, logAudit } from "@/lib/api";
 import { getSettings, type PaymentSettings, type GeneralSettings } from "@/lib/settings";
 import { zarinpalRequest } from "@/lib/payment/zarinpal";
+import { getPublicOrigin } from "@/lib/public-url";
 import { computePricing } from "@/lib/chat/engine";
 import { checkCoupon } from "@/lib/coupons";
 import { rateLimit } from "@/lib/auth";
@@ -157,10 +158,12 @@ export async function POST(req: NextRequest) {
       include: { items: true },
     });
 
-    // ---- request payment (mirrors /api/payment/request) ----
+    // ---- request payment (mirrors /api/payment/request) — callback points at
+    // the public origin (X-Forwarded-Proto/Host) so ZarinPal returns the
+    // visitor to https://domain.tld, not the internal http hop ----
     const callbackUrl =
       paymentSettings.callbackUrl ||
-      `${new URL(req.url).origin}/api/payment/callback`;
+      `${getPublicOrigin(req)}/api/payment/callback`;
 
     const payResult = await zarinpalRequest(paymentSettings, {
       amountToman: order.total,

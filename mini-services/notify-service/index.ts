@@ -21,11 +21,33 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "http";
 import { spawn } from "node:child_process";
 import { open as openFile, readFile, writeFile } from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import { connect } from "node:net";
 import { Server, type Socket } from "socket.io";
 
 const PORT = 3003; // hardcoded — the Caddy gateway expects this port
-const ADMIN_KEY = process.env.ADMIN_NOTIFY_KEY ?? "nakhl-notify-2024";
+
+/**
+ * Shared secret resolution — keeps this service in sync with the Next backend
+ * (which reads the same value through the Miniflare dev context):
+ *   1. ADMIN_NOTIFY_KEY env (explicit),
+ *   2. the `vars.ADMIN_NOTIFY_KEY` value in the repo's wrangler.jsonc — the
+ *      SAME key the local Miniflare dev bindings expose to Next dev.
+ * Without (2), sandbox-dev emits were silently rejected (key mismatch).
+ */
+function resolveAdminKey(): string {
+  if (process.env.ADMIN_NOTIFY_KEY) return process.env.ADMIN_NOTIFY_KEY;
+  try {
+    // ../../wrangler.jsonc relative to mini-services/notify-service/index.ts
+    const wrangler = readFileSync(new URL("../../wrangler.jsonc", import.meta.url), "utf8");
+    const m = wrangler.match(/"ADMIN_NOTIFY_KEY"\s*:\s*"([^"]+)"/);
+    if (m && m[1].length >= 16) return m[1];
+  } catch {
+    /* no wrangler.jsonc next to the service — fall through */
+  }
+  return "nakhl-notify-2024"; // legacy sandbox default (localhost-only dev)
+}
+const ADMIN_KEY = resolveAdminKey();
 const ADMINS_ROOM = "admins";
 const MAX_BODY_BYTES = 64 * 1024;
 
@@ -200,7 +222,9 @@ httpServer.on("request", (req: IncomingMessage, res: ServerResponse) => {
 // ---- start + graceful shutdown ----
 httpServer.listen(PORT, () => {
   console.log(`[notify] service listening on port ${PORT} (socket.io path "/")`);
-  console.log(`[notify] POST /emit ready — key source: ${process.env.ADMIN_NOTIFY_KEY ? "ADMIN_NOTIFY_KEY env" : "default fallback"}`);
+  console.log(
+    `[notify] POST /emit ready — key source: ${process.env.ADMIN_NOTIFY_KEY ? "ADMIN_NOTIFY_KEY env" : ADMIN_KEY === "nakhl-notify-2024" ? "legacy default (dev only)" : "wrangler.jsonc vars (dev-preview)"}`,
+  );
 });
 
 function shutdown(signal: string) {

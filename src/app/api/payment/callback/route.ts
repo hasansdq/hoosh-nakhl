@@ -3,10 +3,15 @@ import { db } from "@/lib/db";
 import { getSettings, type PaymentSettings } from "@/lib/settings";
 import { zarinpalVerify } from "@/lib/payment/zarinpal";
 import { notifyAdmins, notifyCustomer } from "@/lib/notify";
+import { publicUrl } from "@/lib/public-url";
 
 /**
  * ZarinPal gateway callback:
  * GET /api/payment/callback?Authority=xxx&Status=OK|NOK
+ *
+ * All redirects use the PUBLIC origin (X-Forwarded-Proto/Host from the
+ * DirectAdmin/Apache vhost) so a visitor who paid on https://domain.com is
+ * sent back to https://domain.com — never downgraded to the loopback http hop.
  */
 export async function GET(req: NextRequest) {
   try {
@@ -15,7 +20,7 @@ export async function GET(req: NextRequest) {
     const status = (url.searchParams.get("Status") ?? url.searchParams.get("status") ?? "").toUpperCase();
 
     if (!authority) {
-      return Response.redirect(new URL("/?payment=failed&reason=noauth", url.origin), 302);
+      return Response.redirect(publicUrl(req, "/?payment=failed&reason=noauth"), 302);
     }
 
     const order = await db.order.findFirst({
@@ -23,12 +28,12 @@ export async function GET(req: NextRequest) {
       include: { user: { select: { firstName: true, lastName: true, phone: true } } },
     });
     if (!order) {
-      return Response.redirect(new URL("/?payment=failed&reason=notfound", url.origin), 302);
+      return Response.redirect(publicUrl(req, "/?payment=failed&reason=notfound"), 302);
     }
 
     // already processed
     if (order.paymentStatus === "PAID") {
-      return Response.redirect(new URL(`/?payment=success&order=${order.orderNumber}`, url.origin), 302);
+      return Response.redirect(publicUrl(req, `/?payment=success&order=${order.orderNumber}`), 302);
     }
 
     if (status !== "OK") {
@@ -43,7 +48,7 @@ export async function GET(req: NextRequest) {
       await db.orderStatusLog.create({
         data: { orderId: order.id, status: "PAYMENT_FAILED", note: "لغو/خطای پرداخت در درگاه" },
       });
-      return Response.redirect(new URL(`/?payment=failed&order=${order.orderNumber}&reason=canceled`, url.origin), 302);
+      return Response.redirect(publicUrl(req, `/?payment=failed&order=${order.orderNumber}&reason=canceled`), 302);
     }
 
     // verify
@@ -99,7 +104,7 @@ export async function GET(req: NextRequest) {
         from: order.status,
         to: "PAID",
       });
-      return Response.redirect(new URL(`/?payment=success&order=${order.orderNumber}&ref=${verify.refId ?? ""}`, url.origin), 302);
+      return Response.redirect(publicUrl(req, `/?payment=success&order=${order.orderNumber}&ref=${verify.refId ?? ""}`), 302);
     }
 
     await db.order.update({
@@ -113,10 +118,9 @@ export async function GET(req: NextRequest) {
     await db.orderStatusLog.create({
       data: { orderId: order.id, status: "PAYMENT_FAILED", note: verify.message ?? "خطای تأیید" },
     });
-    return Response.redirect(new URL(`/?payment=failed&order=${order.orderNumber}&reason=verify`, url.origin), 302);
+    return Response.redirect(publicUrl(req, `/?payment=failed&order=${order.orderNumber}&reason=verify`), 302);
   } catch (e) {
     console.error("payment callback error:", e);
-    const url = new URL(req.url);
-    return Response.redirect(new URL("/?payment=failed&reason=error", url.origin), 302);
+    return Response.redirect(publicUrl(req, "/?payment=failed&reason=error"), 302);
   }
 }

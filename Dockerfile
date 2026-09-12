@@ -1,60 +1,71 @@
+# syntax=docker/dockerfile:1
 # =============================================================================
-# Nakhl Restaurant — production image (multi-stage)
+# Nakhl Restaurant — production image (multi-stage · Docker / VPS target)
 # -----------------------------------------------------------------------------
-# Build:     docker build -t nakhl-web .
-# Runtime:   node server.js  (Next.js standalone — official Node runtime)
-# Bun is used ONLY as an installer/bundler (bun install / bun build); every
-# runtime process (Next server, Prisma CLI, seeder) runs under Node.js 22 —
-# the exact runtime the app was developed and QA'd with.
+# Build:    docker compose build          (or docker build -t nakhl-restaurant .)
+# Runtime:  ONE Node.js process — docker/app-server.js boots the Next.js
+#           standalone server, the /api/ws socket.io realtime channel and the
+#           /emit push endpoint (see DOCKER-DEPLOY-FA.md).
+#
+# Stage 1 «builder»  — oven/bun:1 (Debian): bun install → prisma generate →
+#                      next build (output: standalone) → merge runtime-only
+#                      native deps into the standalone bundle.
+# Stage 2 «runner»   — node:22-slim (Debian): non-root, healthchecked,
+#                      forward-only migrations + idempotent seed at boot
+#                      (docker/entrypoint.sh), data on the nakhl-data volume.
+#
+# Ports: the app listens on container port 3000 and is published to
+# 127.0.0.1:8080 (host) by docker-compose.yml — DirectAdmin's Apache owns
+#  ports 80/443 on the VPS and reverse-proxies to this container.
 # =============================================================================
 
 # ---------- Stage 1: builder ----------
-FROM node:22-slim AS builder
-
-# openssl + ca-certificates: Prisma engine + outbound HTTPS (ZarinPal / SMS / OpenRouter)
-# curl + unzip: bun bootstrap
-RUN apt-get update \
- && apt-get install -y --no-install-recommends openssl ca-certificates curl unzip \
- && rm -rf /var/lib/apt/lists/* \
- && curl -fsSL https://bun.sh/install | bash \
- && ln -s /root/.bun/bin/bun /usr/local/bin/bun \
- && bun --version
+FROM oven/bun:1 AS builder
 
 WORKDIR /app
 ENV NEXT_TELEMETRY_DISABLED=1
 
-# dependencies first (better layer caching)
+# dependencies first — this layer caches until package.json/bun.lock change
 COPY package.json bun.lock ./
 COPY prisma ./prisma
 RUN bun install --frozen-lockfile
 
-# generate the Prisma client (engines land in node_modules/.prisma + @prisma)
-RUN node node_modules/prisma/build/index.js generate
-
-# application sources
+# application sources (.dockerignore keeps node_modules/.next/.git/… out)
 COPY . .
 
-# client-side realtime path is baked at BUILD time (Caddyfile.prod routes /rt
-# to the notify-service); sandbox default is not used in production images.
-ARG NEXT_PUBLIC_SOCKET_PATH=/rt
-ENV NEXT_PUBLIC_SOCKET_PATH=${NEXT_PUBLIC_SOCKET_PATH}
+# Prisma client — engineless "workerd" build (WASM query compiler): the very
+# same generated client runs on Cloudflare workerd AND on Node (next dev and
+# this standalone server). Native .so engine files are stripped defensively.
+RUN bunx prisma generate && rm -f src/generated/prisma/*.so.node
 
-# production build → .next/standalone (script also copies static + public into it)
+# Build-time public env — the browser bundle connects to socket.io on the
+# same origin at /api/ws (served by docker/app-server.js behind Apache).
+ARG NEXT_PUBLIC_SOCKET_PATH=/api/ws
+ENV NAKHL_DOCKER_BUILD=1 \
+    NEXT_PUBLIC_SOCKET_PATH=${NEXT_PUBLIC_SOCKET_PATH} \
+    NEXT_TELEMETRY_DISABLED=1
+
+# Production build → .next/standalone
 RUN bun run build
 
-# precompile the seeder to plain CJS for the node-only runtime stage
-# (@prisma/client stays external — its engine is copied separately).
-# NOTE: NODE_ENV is inlined statically by Bun's bundler — building with
-# NODE_ENV=production makes the Docker seeder always use production-safe
-# settings (dev OTP off, real gateway only). Dev/sandbox usage runs the
-# TypeScript source directly (bun prisma/seed.ts) with live NODE_ENV.
-RUN NODE_ENV=production bun build prisma/seed.ts --outdir ./prisma-seed --target node --format cjs --external @prisma/client
+# Runtime-only dependencies: modules that the app loads through bundler-
+# excluded dynamic imports (@libsql, socket.io server, optional ZAI SDK)
+# are NOT part of webpack's output-file tracing — install them explicitly
+# and merge them into the standalone node_modules tree. sharp serves
+# /_next/image optimization. Versions are pinned to the tested lockfile.
+RUN mkdir -p /runtime-deps \
+ && cd /runtime-deps \
+ && echo '{"name":"nakhl-runtime-deps","private":true}' > package.json \
+ && bun add --exact @libsql/client@0.18.0 @prisma/adapter-libsql@6.19.3 socket.io@4.8.3 sharp@0.34.5 z-ai-web-dev-sdk@0.0.18 \
+ && cp -r /runtime-deps/node_modules/. /app/.next/standalone/node_modules/
 
-# ---------- Stage 2: runtime ----------
+# ---------- Stage 2: runner ----------
 FROM node:22-slim AS runner
 
+# ca-certificates: outbound HTTPS (ZarinPal / SMS / OpenRouter) through the
+# system trust store; node's built-in store covers most cases — belt & braces.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends openssl ca-certificates curl \
+ && apt-get install -y --no-install-recommends ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -63,31 +74,47 @@ ENV NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1 \
     PORT=3000 \
     HOSTNAME=0.0.0.0 \
-    DATABASE_URL=file:/app/db/custom.db
+    TZ=Asia/Tehran \
+    NAKHL_DATA_DIR=/app/data \
+    NAKHL_SQLITE_PATH=/app/data/nakhl.db \
+    NAKHL_UPLOADS_DIR=/app/data/uploads \
+    NAKHL_MIGRATIONS_DIR=/app/migrations \
+    NAKHL_SEED_DIR=/app/seed \
+    NAKHL_NOTIFY_URL=http://127.0.0.1:3000/emit
 
-# --- Next.js standalone server (contains server.js, .next/static, public/, traced node_modules)
+# standalone server bundle (+ merged runtime deps). Next's file tracing
+# conservatively copies some repo dirs (sandbox services, QA artifacts, …)
+# and even the local .env into the standalone tree — prune all of them; the
+# operational scripts and SQL are copied explicitly right after. Production
+# configuration comes exclusively from the container environment (compose
+# env_file), never from a build-time .env.
 COPY --from=builder /app/.next/standalone ./
+RUN rm -rf docker examples mini-services skills tool-results scripts \
+ && rm -rf .next/cache \
+ && rm -f .env .env.*
+COPY --from=builder /app/.next/static ./.next/static
+COPY --from=builder /app/public ./public
 
-# --- Prisma client + engines + CLI (for first-boot schema push; native binaries
-#     are not reliably captured by Next's output file tracing)
-COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
-COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
-COPY --from=builder /app/node_modules/prisma ./node_modules/prisma
+# operational scripts + SQL (migrations/seed run at every boot, idempotently)
+COPY docker/app-server.js ./app-server.js
+COPY docker/migrate.mjs docker/seed.mjs docker/backup.mjs docker/restore.mjs ./scripts/
+COPY migrations ./migrations
+COPY seed ./seed
+COPY docker/entrypoint.sh /usr/local/bin/nakhl-entrypoint
 
-# --- sharp (+ @img platform binaries) for next/image optimization & upload pipeline
-COPY --from=builder /app/node_modules/sharp ./node_modules/sharp
-COPY --from=builder /app/node_modules/@img ./node_modules/@img
+RUN chmod +x /usr/local/bin/nakhl-entrypoint \
+ && mkdir -p /app/data \
+ && chown -R node:node /app
 
-# --- schema + compiled seeder (first-boot initialization)
-COPY --from=builder /app/prisma ./prisma
-COPY --from=builder /app/prisma-seed ./prisma-seed
-
-COPY docker/entrypoint.sh ./entrypoint.sh
-RUN chmod +x ./entrypoint.sh && mkdir -p /app/db /app/public/uploads
+# never run as root; the data volume inherits this ownership
+USER node
+VOLUME /app/data
 
 EXPOSE 3000
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
-  CMD curl -fsS http://localhost:3000/api/health || exit 1
+# App-level health: /api/health pings the SQLite database — the container is
+# only "healthy" when the web process AND the database respond.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
+  CMD node -e "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
-ENTRYPOINT ["./entrypoint.sh"]
+ENTRYPOINT ["nakhl-entrypoint"]

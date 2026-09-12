@@ -66,8 +66,8 @@
       "categoryId": "cmtb3futx0005rsaowvthnh2m",
       "imageUrl": "/food/koobideh.png",
       "gallery": [
-        "/uploads/food-db5e1b9c-91dd-4781-b431-d287a4f23838.webp",
-        "/uploads/food-9b532d8f-934d-4802-a817-f594d38b030b.webp"
+        "/food/koobideh.png",
+        "/food/barg.png"
       ],
       "isAvailable": true,
       "isSpecial": true,

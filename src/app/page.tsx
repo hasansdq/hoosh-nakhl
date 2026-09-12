@@ -32,19 +32,20 @@ export default function Page() {
     paymentSimulation,
     authOpen,
     refreshSiteSettings,
+    refreshSiteContent,
   } = useAppStore();
   const [booted, setBooted] = useState(false);
 
   useEffect(() => {
     const boot = async () => {
-      await Promise.all([refreshUser(), refreshSiteSettings()]);
+      await Promise.all([refreshUser(), refreshSiteSettings(), refreshSiteContent()]);
       const menuRes = await api<{ categories: typeof menu }>("/api/menu");
       if (menuRes.success) setMenu(menuRes.categories ?? []);
       setMenuLoading(false);
       setBooted(true);
     };
     boot();
-  }, [refreshUser, refreshSiteSettings, setMenu, setMenuLoading]);
+  }, [refreshUser, refreshSiteSettings, refreshSiteContent, setMenu, setMenuLoading]);
 
   // handle ZarinPal return query params: /?payment=success&order=NK-...&ref=...
   useEffect(() => {

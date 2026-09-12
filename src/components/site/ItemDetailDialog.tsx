@@ -201,7 +201,7 @@ export function ItemDetailDialog({
   const [lightboxIndex, setLightboxIndex] = useState(0);
 
   const galleryImages = useMemo(
-    () => (item?.imageUrl ? [item.imageUrl, ...(item.gallery ?? [])] : [...(item.gallery ?? [])]),
+    () => (item && item.imageUrl ? [item.imageUrl, ...(item.gallery ?? [])] : [...(item?.gallery ?? [])]),
     [item]
   );
 

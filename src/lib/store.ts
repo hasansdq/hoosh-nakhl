@@ -127,6 +127,8 @@ interface AppState {
   menu: MenuCategoryPublic[];
   menuLoading: boolean;
   siteSettings: SiteSettings;
+  /** CMS content map (defaults + admin overrides) from /api/site-content */
+  siteContent: Record<string, string>;
   paymentSimulation: PaymentSimulation | null;
   paymentResult: PaymentResult | null;
   chatRefreshKey: number;
@@ -148,6 +150,8 @@ interface AppState {
   setMenuLoading: (v: boolean) => void;
   setSiteSettings: (s: SiteSettings) => void;
   refreshSiteSettings: () => Promise<void>;
+  refreshSiteContent: () => Promise<void>;
+  setSiteContent: (c: Record<string, string>) => void;
   setPaymentSimulation: (p: PaymentSimulation | null) => void;
   setPaymentResult: (r: PaymentResult | null) => void;
   bumpChat: () => void;
@@ -195,6 +199,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   menu: [],
   menuLoading: true,
   siteSettings: DEFAULT_SITE_SETTINGS,
+  siteContent: {},
   paymentSimulation: null,
   paymentResult: null,
   chatRefreshKey: 0,
@@ -214,6 +219,17 @@ export const useAppStore = create<AppState>((set, get) => ({
   setMenu: (menu) => set({ menu }),
   setMenuLoading: (menuLoading) => set({ menuLoading }),
   setSiteSettings: (siteSettings) => set({ siteSettings }),
+  setSiteContent: (siteContent) => set({ siteContent }),
+  refreshSiteContent: async () => {
+    try {
+      const res = await api<{ content: Record<string, string> }>("/api/site-content");
+      if (res.success && res.content && typeof res.content === "object") {
+        set({ siteContent: res.content });
+      }
+    } catch {
+      /* registry defaults apply on failure (useContent falls back per-key) */
+    }
+  },
   refreshSiteSettings: async () => {
     try {
       const res = await api<{ settings: SiteSettings }>("/api/settings");

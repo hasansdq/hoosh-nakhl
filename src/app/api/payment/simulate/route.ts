@@ -6,9 +6,24 @@ import { notifyAdmins, notifyCustomer } from "@/lib/notify";
 /**
  * Simulated gateway completion (used when simulation mode is ON in payment settings).
  * POST { authority: string, success: boolean }
+ *
+ * PRODUCTION SAFETY (hard guards — see user request «پرداخت آزمایشی کاملاً غیرفعال
+ * در نسخه نهایی»):
+ *   1. ZARINPAL_FORCE_REAL=1 (default ON in docker-compose) → the endpoint is
+ *      dead: 403 for everyone, no exceptions.
+ *   2. Even without the kill-switch, ONLY orders whose paymentAuthority was
+ *      ISSUED by the local simulator ("SIM-*" prefix) can be completed here.
+ *      A real ZarinPal authority must never be markable through this route —
+ *      previously a logged-in user could have “paid” their real-gateway order
+ *      for free by POSTing their own authority here.
  */
 export async function POST(req: NextRequest) {
   try {
+    // Guard 1 — global kill-switch (docker-compose sets it to "1" by default)
+    if (process.env.ZARINPAL_FORCE_REAL === "1") {
+      return fail("دروازهٔ آزمایشی پرداخت در این استقرار غیرفعال است", 403);
+    }
+
     const user = await requireUser();
     if (!user) return fail("ابتدا وارد شوید", 401);
 
@@ -19,6 +34,17 @@ export async function POST(req: NextRequest) {
       where: { paymentAuthority: body.authority, userId: user.id },
     });
     if (!order) return fail("تراکنش یافت نشد", 404);
+
+    // Guard 2 — only simulator-issued authorities (SIM-*) may be completed here
+    if (!order.paymentAuthority?.startsWith("SIM-")) {
+      await logAudit(user.id, "PAYMENT_SIMULATE_REJECTED_REAL_AUTHORITY", {
+        entity: "order",
+        entityId: order.id,
+        detail: { orderNumber: order.orderNumber, authority: body.authority.slice(0, 64) },
+      });
+      return fail("این تراکنش از درگاه واقعی است و از مسیر آزمایشی قابل تکمیل نیست", 403);
+    }
+
     if (order.paymentStatus === "PAID") {
       return ok({ status: "PAID", orderNumber: order.orderNumber });
     }

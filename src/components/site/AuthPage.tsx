@@ -17,6 +17,7 @@ import { useCallback, useEffect, useRef, useState, type CSSProperties } from "re
 import Image from "next/image";
 import { useAppStore, type ViewName } from "@/lib/store";
 import { api } from "@/lib/client-api";
+import { useContent, RichText, ContentImage } from "@/lib/use-content";
 import { NakhlLogo } from "@/components/site/Header";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { Button } from "@/components/ui/button";
@@ -321,35 +322,26 @@ function StepIndicator({ current }: { current: number }) {
 }
 
 /* ------------------------------------------------------------------ */
-/*  چرخانندهٔ نظر مشتریان (پنل برند)                                    */
+/*  چرخانندهٔ نظر مشتریان (پنل برند) — نظرات از CMS                    */
 /* ------------------------------------------------------------------ */
-const TESTIMONIALS = [
-  {
-    text: "سفارش گفتمانی با «هوش نخل» فوق‌العاده بود؛ فقط چت کردم و سفارشم دقیق و سریع ثبت شد.",
-    author: "مهدی ر.",
-    rating: 5,
-  },
-  {
-    text: "کباب برگ دقیقاً سرِ زمان تعیین‌شده و داغ رسید. کیفیت گوشت و برنج واقعاً ممتازه.",
-    author: "زهرا ک.",
-    rating: 5,
-  },
-  {
-    text: "بدون تماس تلفنی، بدون دردسر؛ عضو شدم و آدرسم ذخیره می‌شود. تجربهٔ سفارش آنلاین واقعی!",
-    author: "حسین ع.",
-    rating: 5,
-  },
-];
 
 function TestimonialRotator() {
+  const { t } = useContent();
+  const testimonials = [
+    { text: t("auth.testimonial1.text"), author: t("auth.testimonial1.author"), rating: 5 },
+    { text: t("auth.testimonial2.text"), author: t("auth.testimonial2.author"), rating: 5 },
+    { text: t("auth.testimonial3.text"), author: t("auth.testimonial3.author"), rating: 5 },
+  ].filter((x) => x.text.trim() !== "");
   const [idx, setIdx] = useState(0);
 
   useEffect(() => {
-    const t = setInterval(() => setIdx((i) => (i + 1) % TESTIMONIALS.length), 5200);
+    if (testimonials.length < 2) return;
+    const t = setInterval(() => setIdx((i) => (i + 1) % testimonials.length), 5200);
     return () => clearInterval(t);
-  }, []);
+  }, [testimonials.length]);
 
-  const t = TESTIMONIALS[idx];
+  if (testimonials.length === 0) return null;
+  const cur = testimonials[idx % testimonials.length];
 
   return (
     <figure
@@ -358,7 +350,7 @@ function TestimonialRotator() {
     >
       <Quote className="absolute -top-1 left-3 h-10 w-10 rotate-180 text-white/10" aria-hidden />
       <blockquote key={idx} className="animate-fade-up relative text-[13px] font-medium leading-6 text-white/90">
-        «{t.text}»
+        «{cur.text}»
       </blockquote>
       <figcaption className="mt-3 flex items-center justify-between gap-3">
         <div className="flex items-center gap-2.5">
@@ -367,19 +359,19 @@ function TestimonialRotator() {
             style={{ backgroundImage: "linear-gradient(135deg, color-mix(in oklch, var(--gold) 85%, white), var(--gold))" }}
             aria-hidden
           >
-            {t.author.slice(0, 1)}
+            {cur.author.slice(0, 1)}
           </span>
-          <span className="text-xs font-bold text-white/85">{t.author}</span>
+          <span className="text-xs font-bold text-white/85">{cur.author}</span>
         </div>
-        <div className="flex items-center gap-1" aria-label={`امتیاز ${toPersianDigits(t.rating)} از ۵`}>
-          {Array.from({ length: t.rating }).map((_, i) => (
+        <div className="flex items-center gap-1" aria-label={`امتیاز ${toPersianDigits(cur.rating)} از ۵`}>
+          {Array.from({ length: cur.rating }).map((_, i) => (
             <Star key={i} className="h-3.5 w-3.5 fill-gold text-gold" aria-hidden />
           ))}
         </div>
       </figcaption>
       {/* نقاط نشانگر */}
       <div className="absolute bottom-1.5 left-1/2 flex -translate-x-1/2 gap-1.5" aria-hidden>
-        {TESTIMONIALS.map((_, i) => (
+        {testimonials.map((_, i) => (
           <span
             key={i}
             className={`h-1 rounded-full transition-all duration-500 ${
@@ -397,6 +389,7 @@ function TestimonialRotator() {
 /*  تصویر سینمایی + پارالاکس + کاشی‌های شیشه‌ای + نظرها + آمار          */
 /* ------------------------------------------------------------------ */
 function BrandPanel() {
+  const { t, img } = useContent();
   const parallaxRefs = useRef<(HTMLDivElement | null)[]>([]);
   const reduced = useRef(false);
 
@@ -434,8 +427,8 @@ function BrandPanel() {
     >
       {/* ── لایهٔ تصویر سینمایی ── */}
       <div className="absolute inset-0">
-        <Image
-          src="/food/hero.png"
+        <ContentImage
+          src={img("auth.brand.image")}
           alt=""
           fill
           sizes="(min-width: 1024px) 46vw, 0px"
@@ -478,8 +471,8 @@ function BrandPanel() {
           <NakhlLogo size={46} />
         </span>
         <div>
-          <div className="text-lg font-extrabold text-white">رستوران نخل</div>
-          <div className="text-[11px] text-white/70">رفسنجان • سفارش آنلاین هوشمند</div>
+          <div className="text-lg font-extrabold text-white">{t("auth.brand.name")}</div>
+          <div className="text-[11px] text-white/70">{t("auth.brand.tagline")}</div>
         </div>
       </div>
 
@@ -488,24 +481,23 @@ function BrandPanel() {
         <div className="space-y-3">
           <span className="inline-flex items-center gap-1.5 rounded-full border border-white/25 bg-white/10 px-3 py-1 text-xs font-bold text-white backdrop-blur">
             <Sparkles className="h-3.5 w-3.5 text-gold" />
-            بدون رمز عبور؛ فقط یک پیامک!
+            {t("auth.brand.badge")}
           </span>
           <h2 className="text-[1.65rem] font-extrabold leading-snug text-white xl:text-4xl">
-            به خانوادهٔ <span className="gold-gradient-text">نخل</span> بپیوندید
+            <RichText text={t("auth.brand.title")} />
           </h2>
           <p className="max-w-md text-sm leading-7 text-white/80">
-            با عضویت، سفارش‌هایتان را با «هوش نخل» ثبت کنید، آدرس‌ها و علاقه‌مندی‌هایتان را ذخیره کنید و
-            تخفیف‌های ویژهٔ اعضا را از دست ندهید.
+            {t("auth.brand.subtitle")}
           </p>
         </div>
 
         {/* ردیف تصاویر غذای محبوب — با پارالاکس ماوس */}
         <div className="flex items-end justify-center gap-0 py-1">
           {[
-            { src: "/food/barg.png", alt: "", caption: "چلوکباب برگ", rotate: "-rotate-6" },
-            { src: "/food/koobideh.png", alt: "", caption: "کوبیده", rotate: "rotate-2" },
-            { src: "/food/bastani.png", alt: "", caption: "بستنی سنتی", rotate: "-rotate-3" },
-          ].map((f, i) => (
+            { src: img("auth.brand.food1.image"), caption: t("auth.brand.food1.caption"), rotate: "-rotate-6" },
+            { src: img("auth.brand.food2.image"), caption: t("auth.brand.food2.caption"), rotate: "rotate-2" },
+            { src: img("auth.brand.food3.image"), caption: t("auth.brand.food3.caption"), rotate: "-rotate-3" },
+          ].filter((f) => f.src !== "").map((f, i) => (
             <div
               key={f.src}
               ref={(el) => {
@@ -520,7 +512,7 @@ function BrandPanel() {
                 style={{ animationDelay: `${i * 0.7}s` }}
               >
                 <span className="relative block h-20 w-full overflow-hidden rounded-xl">
-                  <Image src={f.src} alt={f.alt} fill sizes="96px" className="object-cover" />
+                  <Image src={f.src} alt={f.caption} fill sizes="96px" className="object-cover" />
                 </span>
                 <figcaption className="pt-1 text-center text-[10px] font-bold text-white/90">{f.caption}</figcaption>
               </figure>
@@ -531,9 +523,9 @@ function BrandPanel() {
         {/* کاشی‌های شیشه‌ای ویژگی‌ها */}
         <ul className="grid grid-cols-3 gap-3">
           {[
-            { icon: Bot, title: "سفارش گفتمانی", desc: "با هوش نخل، مثل حضوری" },
-            { icon: Truck, title: "پیک سریع", desc: "داغ و به‌موقع در رفسنجان" },
-            { icon: LockKeyhole, title: "پرداخت امن", desc: "درگاه رسمی زرین‌پال" },
+            { icon: Bot, title: t("auth.brand.feature1.title"), desc: t("auth.brand.feature1.desc") },
+            { icon: Truck, title: t("auth.brand.feature2.title"), desc: t("auth.brand.feature2.desc") },
+            { icon: LockKeyhole, title: t("auth.brand.feature3.title"), desc: t("auth.brand.feature3.desc") },
           ].map((f) => (
             <li
               key={f.title}
@@ -556,9 +548,9 @@ function BrandPanel() {
         <TestimonialRotator />
         <div className="flex items-center justify-between gap-2 rounded-2xl border border-white/15 bg-white/5 px-5 py-3 backdrop-blur">
           {[
-            { v: "+۳۰", l: "غذای اصیل" },
-            { v: "۷ روز", l: "در هفته" },
-            { v: "۱۲ تا ۱۲", l: "ظهر تا شب" },
+            { v: t("auth.brand.stat1.value"), l: t("auth.brand.stat1.label") },
+            { v: t("auth.brand.stat2.value"), l: t("auth.brand.stat2.label") },
+            { v: t("auth.brand.stat3.value"), l: t("auth.brand.stat3.label") },
           ].map((s, i) => (
             <div
               key={s.l}
@@ -579,9 +571,10 @@ function BrandPanel() {
 /*  نوار برند موبایل — تصویر + لوگو (فقط < lg)                          */
 /* ------------------------------------------------------------------ */
 function MobileBrandBand() {
+  const { t, img } = useContent();
   return (
     <div className="relative mb-5 h-44 overflow-hidden rounded-[1.75rem] border border-border/70 shadow-xl shadow-primary/10 sm:h-48 lg:hidden" aria-hidden>
-      <Image src="/food/hero.png" alt="" fill sizes="92vw" className="object-cover" priority />
+      <ContentImage src={img("auth.brand.image")} alt="" fill sizes="92vw" className="object-cover" priority />
       <div className="absolute inset-0 bg-gradient-to-t from-[oklch(0.2_0.05_163)]/90 via-[oklch(0.26_0.06_160)]/45 to-transparent" />
       <div className="absolute bottom-0 right-0 flex w-full items-end justify-between p-4">
         <div className="flex items-center gap-3">
@@ -589,13 +582,13 @@ function MobileBrandBand() {
             <NakhlLogo size={40} />
           </span>
           <div>
-            <div className="text-base font-extrabold text-white">رستوران نخل</div>
-            <div className="text-[10px] text-white/75">رفسنجان • سفارش آنلاین هوشمند</div>
+            <div className="text-base font-extrabold text-white">{t("auth.brand.name")}</div>
+            <div className="text-[10px] text-white/75">{t("auth.brand.tagline")}</div>
           </div>
         </div>
         <span className="hidden items-center gap-1.5 rounded-full border border-white/25 bg-white/10 px-3 py-1 text-[10px] font-bold text-white backdrop-blur sm:inline-flex">
           <Sparkles className="h-3 w-3 text-gold" />
-          فقط یک پیامک!
+          {t("auth.mobile.chip")}
         </span>
       </div>
     </div>
@@ -607,6 +600,7 @@ function MobileBrandBand() {
 /* ------------------------------------------------------------------ */
 export function AuthPage() {
   const { refreshUser, setView, setAuthOpen, authIntent } = useAppStore();
+  const { t } = useContent();
 
   const [step, setStep] = useState<Step>("phone");
   const [direction, setDirection] = useState<"fwd" | "back">("fwd");
@@ -871,7 +865,7 @@ export function AuthPage() {
             className="group flex items-center gap-2 rounded-xl border border-transparent px-3 py-2 text-sm font-bold text-muted-foreground transition-all hover:border-border hover:bg-accent hover:text-foreground"
           >
             <ArrowRight className="h-4 w-4 transition-transform duration-200 group-hover:-translate-x-0.5" />
-            <span className="hidden sm:inline">بازگشت به رستوران</span>
+            <span className="hidden sm:inline">{t("auth.backLabel")}</span>
             <span className="sm:hidden">بازگشت</span>
           </button>
 
@@ -927,15 +921,16 @@ export function AuthPage() {
                       <div className="space-y-2.5 text-center">
                         <span className="inline-flex items-center gap-1.5 rounded-full border border-primary/25 bg-primary/5 px-3.5 py-1 text-[11px] font-bold text-primary">
                           <Sparkles className="h-3.5 w-3.5" />
-                          بدون رمز عبور — فقط با پیامک!
+                          {t("auth.badge")}
                         </span>
                         <h2 className="text-[1.55rem] font-extrabold leading-snug sm:text-3xl">
-                          ورود <span className="text-muted-foreground/60">|</span>{" "}
-                          <span className="gold-gradient-text animate-gradient-pan">ثبت‌نام</span>
+                          <RichText
+                            text={t("auth.title")}
+                            extraHighlightClass="animate-gradient-pan"
+                          />
                         </h2>
                         <p className="mx-auto max-w-sm text-sm leading-7 text-muted-foreground">
-                          شماره موبایل خود را وارد کنید تا کد تأیید برایتان پیامک شود؛ حساب ندارید؟ همین مسیر
-                          عضویت می‌سازد.
+                          {t("auth.subtitle")}
                         </p>
                       </div>
 
@@ -1034,15 +1029,10 @@ export function AuthPage() {
                       </Button>
 
                       <p className="text-center text-[11px] leading-5 text-muted-foreground">
-                        با ورود یا ثبت‌نام،{" "}
-                        <a
-                          href="#"
-                          onClick={(e) => e.preventDefault()}
-                          className="font-bold text-primary underline underline-offset-2"
-                        >
-                          قوانین رستوران نخل
-                        </a>{" "}
-                        را می‌پذیرید.
+                        <RichText
+                          text={t("auth.terms")}
+                          highlightClassName="font-bold text-primary underline underline-offset-2 cursor-pointer"
+                        />
                       </p>
                     </div>
                   )}

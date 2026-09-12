@@ -1,0 +1,17 @@
+# Copy to `.dev.vars` for local preview (`wrangler dev`) and to `wrangler secret put`
+# for production. NEVER commit real values.
+
+# Shared secret for the realtime notification channel (Durable Object).
+# The admin panel joins the "admins" room with this key; server-side emits
+# authenticate with the x-notify-key header.
+ADMIN_NOTIFY_KEY=nakhl-notify-2024
+
+# Force the real ZarinPal gateway even when DB settings still have
+# sandbox/simulation enabled (production safety switch). Optional.
+# ZARINPAL_FORCE_REAL=1
+
+# ── Development-only (never set these in production) ──
+# Expose OTP dev codes in API responses (testing without an SMS provider):
+# NAKHL_EXPOSE_DEV_CODE=1
+# Fallback HTTP endpoint of the sandbox notify-service (Socket.IO):
+# NAKHL_NOTIFY_URL=http://localhost:3003/emit

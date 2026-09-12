@@ -18,7 +18,7 @@ if [ ! -d "$NEXTJS_PROJECT_DIR" ]; then
     exit 1
 fi
 
-echo "🚀 开始构建 Next.js 应用和 mini-services..."
+echo "🚀 开始构建 Nakhl 餐厅应用（Cloudflare Workers 架构）..."
 echo "📁 Next.js 项目路径: $NEXTJS_PROJECT_DIR"
 
 # 切换到 Next.js 项目目录
@@ -27,138 +27,108 @@ cd "$NEXTJS_PROJECT_DIR" || exit 1
 # 设置环境变量
 export NEXT_TELEMETRY_DISABLED=1
 
+BUILD_ID="${BUILD_ID:-manual}"
 BUILD_DIR="/tmp/build_fullstack_$BUILD_ID"
 echo "📁 清理并创建构建目录: $BUILD_DIR"
+rm -rf "$BUILD_DIR"
 mkdir -p "$BUILD_DIR"
 
-# 安装依赖
+# ─────────────────────────────────────────────────────────────────────────────
+# 1) 安装依赖
+#    postinstall 自动执行 `prisma generate`（生成 D1/Workers 无引擎客户端）。
+# ─────────────────────────────────────────────────────────────────────────────
 echo "📦 安装依赖..."
 bun install
 
-# 构建 Next.js 应用
-echo "🔨 构建 Next.js 应用..."
-bun run build
+# ─────────────────────────────────────────────────────────────────────────────
+# 2) Cloudflare Workers 构建（@opennextjs/cloudflare 适配器）
+#
+#    `bun run cf:build` = prisma generate + `next build`（完整类型检查，
+#    无 ignoreBuildErrors）+ OpenNext 打包，产出**完全自包含**的 worker：
+#      • .open-next/worker.js  — Next 服务端 + 全部路由（运行时不再需要
+#        应用的 node_modules）
+#      • .open-next/assets     — 静态资源（public + .next/static）
+#
+#    应用架构：D1（数据库，Prisma + adapter-d1）/ R2（上传）/ Durable
+#    Object（实时通知，替代 Socket.IO mini-service）。
+# ─────────────────────────────────────────────────────────────────────────────
+echo "🔨 构建 Cloudflare Workers 应用 (OpenNext)..."
+bun run cf:build
 
-# 校验 standalone 服务端入口是否生成（部署成功率守卫）。
-# Next 仅在 next.config 含 output:"standalone" 时产出 .next/standalone/server.js。
-# 若用户/AI 编辑项目时改写或删除了该配置，bun run build 仍会成功（static 照常
-# 产出、退出码 0），但 standalone 缺失——打出的包里没有 server.js，部署到 FC 后
-# start.sh 找不到 next-service-dist/server.js → 不启动 Next → Caddy:81 反代空的
-# 3000 → FC 健康检查 120s 超时失败（线上 warmup_412 / FunctionNotStarted 的主因）。
-# 这里做一次自愈：仅在确实缺失时，给 next.config 补回 output:"standalone" 并重建。
-# 正常项目（已生成 server.js）整段跳过，不读写任何用户文件。
-if [ ! -f ".next/standalone/server.js" ]; then
-    echo "⚠️  构建未产出 .next/standalone/server.js，开始自愈 next.config 的 output 配置..."
-    NEXT_CONFIG_FILE="$(ls next.config.ts next.config.js next.config.mjs next.config.cjs 2>/dev/null | head -1)"
-
-    if [ -z "$NEXT_CONFIG_FILE" ]; then
-        echo "❌ 构建失败：未找到 next.config.*，无法生成 standalone 部署产物。"
-        exit 1
-    fi
-
-    if grep -Eq "output\s*:\s*['\"]standalone['\"]" "$NEXT_CONFIG_FILE"; then
-        # 已声明 standalone 却仍没产出 server.js，说明不是配置缺失（可能 build 真
-        # 出错、自定义 distDir 等）。不臆改用户配置，直接失败并暴露原因。
-        echo "❌ 构建失败：$NEXT_CONFIG_FILE 已含 output:\"standalone\"，但仍未生成 .next/standalone/server.js。"
-        echo "   请检查上方构建日志中的报错或项目自定义的构建配置。"
-        exit 1
-    fi
-
-    if grep -Eq "output\s*:\s*['\"]" "$NEXT_CONFIG_FILE"; then
-        # 已显式声明了其它 output（如 "export" 静态导出 / "standalone" 之外的值）。
-        # "export" 与本部署模型（standalone + 自定义 server）互斥——不能注入第二个
-        # output 覆盖用户意图（JS 对象重复 key 后者生效，注入也无效）。明确失败。
-        echo "❌ 构建失败：$NEXT_CONFIG_FILE 已声明非 standalone 的 output（如 \"export\" 静态导出），与当前部署模型不兼容。"
-        echo "   当前部署需要 output:\"standalone\"。请改为 standalone，或确认该项目是否应走静态托管而非部署沙箱。"
-        exit 1
-    fi
-
-    echo "🔧 检测到 $NEXT_CONFIG_FILE 缺少 output:\"standalone\"，自动注入后重新构建..."
-    cp "$NEXT_CONFIG_FILE" "${NEXT_CONFIG_FILE}.zbak"
-    # 在第一个配置对象字面量起始的 { 之后插入 output:"standalone"，
-    # 覆盖脚手架常见写法：const nextConfig...= {  /  export default {  /  module.exports = {
-    perl -0pi -e 's/((?:const\s+\w+[^=]*=|export\s+default|module\.exports\s*=)\s*\{)/$1\n  output: "standalone",/' "$NEXT_CONFIG_FILE"
-
-    if ! grep -Eq "output\s*:\s*['\"]standalone['\"]" "$NEXT_CONFIG_FILE"; then
-        echo "❌ 未能匹配到可注入的配置对象，next.config 写法非常规，需人工添加 output:\"standalone\"。"
-        echo "   当前 $NEXT_CONFIG_FILE 内容："
-        cat "$NEXT_CONFIG_FILE"
-        mv "${NEXT_CONFIG_FILE}.zbak" "$NEXT_CONFIG_FILE"
-        exit 1
-    fi
-
-    echo "🔨 已注入 output:\"standalone\"，重新构建..."
-    bun run build
-
-    if [ ! -f ".next/standalone/server.js" ]; then
-        echo "❌ 注入 output:\"standalone\" 并重建后，仍未生成 .next/standalone/server.js。"
-        exit 1
-    fi
-    echo "✅ 自愈成功：standalone 服务端入口已生成。"
+# 部署成功率守卫：worker 入口必须存在（cf:build 失败时 set -e 会提前
+# 退出，这里防御“静默成功”的情况）。
+if [ ! -f ".open-next/worker.js" ]; then
+    echo "❌ 构建失败：未生成 .open-next/worker.js（cf:build 出错，见上方日志）"
+    exit 1
 fi
+echo "✅ OpenNext worker 已生成: .open-next/worker.js"
 
-# 构建 mini-services
-# 检查 Next.js 项目目录下是否有 mini-services 目录
-if [ -d "$NEXTJS_PROJECT_DIR/mini-services" ]; then
-    echo "🔨 构建 mini-services..."
-    # 使用 workspace-agent 目录下的 mini-services 脚本
-    sh "$SCRIPT_DIR/mini-services-install.sh"
-    sh "$SCRIPT_DIR/mini-services-build.sh"
-
-    # 复制 mini-services-start.sh 到 mini-services-dist 目录
-    echo "  - 复制 mini-services-start.sh 到 $BUILD_DIR"
-    cp "$SCRIPT_DIR/mini-services-start.sh" "$BUILD_DIR/mini-services-start.sh"
-    chmod +x "$BUILD_DIR/mini-services-start.sh"
-else
-    echo "ℹ️  mini-services 目录不存在，跳过"
-fi
-
-# 将所有构建产物复制到临时构建目录
+# ─────────────────────────────────────────────────────────────────────────────
+# 3) 收集部署产物（目录结构与仓库一致，wrangler 配置原样可用）
+# ─────────────────────────────────────────────────────────────────────────────
 echo "📦 收集构建产物到 $BUILD_DIR..."
 
-# 复制 Next.js standalone 构建输出
-if [ -d ".next/standalone" ]; then
-    echo "  - 复制 .next/standalone"
-    cp -r .next/standalone "$BUILD_DIR/next-service-dist/"
-fi
+# 自定义 worker 入口 + Durable Object 源码（wrangler 启动时现场打包 TS）：
+#   src/worker.js   → main：导出 NakhlRealtime 类（DO 绑定要求从 main 导出），
+#                     并把 /api/ws 的 WebSocket 升级在进入 Next.js 之前路由到 DO
+#   src/do/realtime.ts → DO 实现（零依赖、自包含，无任何 import）
+mkdir -p "$BUILD_DIR/src/do"
+cp src/worker.js "$BUILD_DIR/src/worker.js"
+cp src/do/realtime.ts "$BUILD_DIR/src/do/realtime.ts"
 
-# 复制 Next.js 静态文件
-if [ -d ".next/static" ]; then
-    echo "  - 复制 .next/static"
-    mkdir -p "$BUILD_DIR/next-service-dist/.next"
-    cp -r .next/static "$BUILD_DIR/next-service-dist/.next/"
-fi
+# OpenNext 产物（worker + 静态资源）
+echo "  - 复制 .open-next"
+cp -r .open-next "$BUILD_DIR/.open-next"
 
-# 复制 public 目录
-if [ -d "public" ]; then
-    echo "  - 复制 public"
-    cp -r public "$BUILD_DIR/next-service-dist/"
-fi
+# wrangler 配置（D1/R2/DO/assets/vars 绑定原样；main=src/worker.js）
+cp wrangler.jsonc "$BUILD_DIR/wrangler.jsonc"
 
-# Python 不继承 workspace-agent 的 /home/z/.venv。若项目包含 Python 源码或
-# 依赖清单，在构建期将生产依赖固化到产物，并保持 Python 源码的项目相对路径。
-PROJECT_DIR="$NEXTJS_PROJECT_DIR" BUILD_DIR="$BUILD_DIR" \
-    bash "$SCRIPT_DIR/python-runtime-build.sh"
-
-# 有 Preview 数据库时复制现有数据；没有时直接在部署产物中初始化空库。
-# 模板源码不携带 db/custom.db，不能依赖 dev.sh 必须在 Deploy 前成功运行过。
-PROJECT_DIR="$NEXTJS_PROJECT_DIR" BUILD_DIR="$BUILD_DIR" \
-    bash "$SCRIPT_DIR/database-runtime-build.sh"
+# D1 迁移 + 种子数据（容器首次启动时由 start.sh 应用，幂等）
+echo "  - 复制 migrations + seed"
+cp -r migrations "$BUILD_DIR/migrations"
+mkdir -p "$BUILD_DIR/seed"
+cp seed/*.sql "$BUILD_DIR/seed/"
 
 # 复制 Caddyfile（如果存在）
 if [ -f "Caddyfile" ]; then
     echo "  - 复制 Caddyfile"
     cp Caddyfile "$BUILD_DIR/"
-else
-    echo "ℹ️  Caddyfile 不存在，跳过"
 fi
 
-# 复制 start.sh 脚本
-echo "  - 复制 start.sh 到 $BUILD_DIR"
+# 注：本项目实时通知走 Durable Object（worker 内），不再打包
+# mini-services/notify-service（Socket.IO）—— 更小的包、更少的内存。
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 4) wrangler 运行时工具链（wrangler + workerd + miniflare）
+#    构建期安装并直接打进包里 → 部署容器冷启动**无需网络、无需 npm install**。
+#    （约 260MB 未压缩 / ~70MB tar.gz）
+# ─────────────────────────────────────────────────────────────────────────────
+echo "🧰 安装 wrangler 运行时工具链..."
+RUNTIME_DIR="$BUILD_DIR/runtime"
+mkdir -p "$RUNTIME_DIR"
+cat > "$RUNTIME_DIR/package.json" <<'EOF'
+{
+  "name": "nakhl-wrangler-runtime",
+  "private": true,
+  "dependencies": {
+    "wrangler": "4.127.1"
+  }
+}
+EOF
+(cd "$RUNTIME_DIR" && bun install)
+
+# 注：本项目为纯 JS/TS 应用（无 Python 源码依赖）—— 不执行
+# python-runtime-build.sh。项目的 skills/ 目录只包含 AI 平台脚手架
+# 脚本（.py），与应用运行时无关，不应打进部署包。
+
+# 复制 start.sh 脚本（容器启动：D1 迁移+种子 → wrangler dev → Caddy 网关）
+echo "  - 复制 start.sh"
 cp "$SCRIPT_DIR/start.sh" "$BUILD_DIR/start.sh"
 chmod +x "$BUILD_DIR/start.sh"
 
-# 打包到 $BUILD_DIR.tar.gz
+# ─────────────────────────────────────────────────────────────────────────────
+# 5) 打包
+# ─────────────────────────────────────────────────────────────────────────────
 PACKAGE_FILE="${BUILD_DIR}.tar.gz"
 echo ""
 echo "📦 打包构建产物到 $PACKAGE_FILE..."
@@ -166,8 +136,8 @@ cd "$BUILD_DIR" || exit 1
 tar -czf "$PACKAGE_FILE" .
 cd - > /dev/null || exit 1
 
-# # 清理临时目录
-# rm -rf "$BUILD_DIR"
+# 清理临时目录（保留 tar.gz）
+rm -rf "$BUILD_DIR"
 
 echo ""
 echo "✅ 构建完成！所有产物已打包到 $PACKAGE_FILE"

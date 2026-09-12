@@ -23,7 +23,9 @@ export function AdminLogin() {
       return;
     }
     setLoading(true);
-    const res = await api<{ admin: { username: string; displayName: string } }>("/api/admin/login", {
+    const res = await api<{
+      admin: { username: string; displayName: string; lastLoginAt: string | null };
+    }>("/api/admin/login", {
       body: { username: username.trim(), password },
     });
     setLoading(false);

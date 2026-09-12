@@ -61,3 +61,19 @@ server.log
 /--full-page
 *.png.bak
 agent-browser-artifacts/
+# Cloudflare Workers (OpenNext) build artifacts + local Miniflare state
+.open-next/
+.wrangler/
+.dev.vars
+# Prisma generated client — produced by `prisma generate` (postinstall / db:generate),
+# never committed. Fresh clones & Cloudflare Builds generate it automatically.
+/src/generated/
+# runtime junk
+.zscripts/dev.pid
+# local SQLite files (legacy dev DB path — app runtime uses the D1 binding)
+/db/
+# per-service logs
+.zscripts/*.log
+
+# host-side backup copies (docker/backup.sh output)
+/backups/

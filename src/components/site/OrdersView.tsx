@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useMemo } from "react";
-import type { Socket } from "socket.io-client";
+import type { RealtimeSocket } from "@/lib/realtime";
 import { connectRealtime } from "@/lib/realtime";
 import { useAppStore } from "@/lib/store";
 import { api } from "@/lib/client-api";
@@ -232,7 +232,7 @@ export function OrdersView() {
   // The customer-join handshake is per-order; we join every order in the
   // user's list so room-scoped broadcasts reach us for each.
   const [liveConnected, setLiveConnected] = useState(false);
-  const socketRef = useRef<Socket | null>(null);
+  const socketRef = useRef<RealtimeSocket | null>(null);
   // mirror of the current orders list for the connect/reconnect effect to read
   // without re-subscribing. Updated synchronously after every setOrders.
   const ordersRef = useRef<OrderRow[]>([]);

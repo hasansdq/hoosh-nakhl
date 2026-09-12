@@ -3,7 +3,7 @@ import { db } from "@/lib/db";
 import { ok, fail, requireAdmin, logAudit } from "@/lib/api";
 import { menuItemSchema } from "@/lib/validators";
 import { getClientIp } from "@/lib/auth";
-import type { Prisma } from "@prisma/client";
+import { Prisma } from "@/generated/prisma/client";
 
 export async function PUT(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   try {
@@ -30,13 +30,14 @@ export async function PUT(req: NextRequest, ctx: { params: Promise<{ id: string 
         ...(d.name !== undefined && { name: d.name }),
         ...(d.description !== undefined && { description: d.description || null }),
         ...(d.price !== undefined && { price: d.price }),
-        ...(d.categoryId !== undefined && { categoryId: d.categoryId }),
+        // relation connect instead of a raw categoryId — matches MenuItemUpdateInput
+        ...(d.categoryId !== undefined && { category: { connect: { id: d.categoryId } } }),
         ...(d.imageUrl !== undefined && { imageUrl: d.imageUrl || null }),
         ...(d.gallery !== undefined && {
           gallery:
             Array.isArray(d.gallery) && d.gallery.length > 0
-              ? (d.gallery as unknown as Prisma.JsonValue)
-              : null,
+              ? (d.gallery as unknown as Prisma.InputJsonValue)
+              : Prisma.DbNull,
         }),
         ...(d.isAvailable !== undefined && { isAvailable: d.isAvailable }),
         ...(d.isSpecial !== undefined && { isSpecial: d.isSpecial }),

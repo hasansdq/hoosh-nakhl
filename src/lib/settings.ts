@@ -133,7 +133,16 @@ export const DEFAULT_GENERAL_SETTINGS: GeneralSettings = {
 
 // ============ Manager ============
 
-type SettingsGroup = "ai" | "sms" | "payment" | "general";
+export type SettingsGroup = "ai" | "sms" | "payment" | "general";
+
+type AnySettings = AISettings | SMSSettings | PaymentSettings | GeneralSettings;
+
+const DEFAULT_SETTINGS: Record<SettingsGroup, AnySettings> = {
+  ai: DEFAULT_AI_SETTINGS,
+  sms: DEFAULT_SMS_SETTINGS,
+  payment: DEFAULT_PAYMENT_SETTINGS,
+  general: DEFAULT_GENERAL_SETTINGS,
+};
 
 interface SettingsCache {
   data: Record<string, unknown>;
@@ -155,26 +164,22 @@ function deepMerge<T>(base: T, override: Partial<T> | null | undefined): T {
   return result as T;
 }
 
-export async function getSettings<T>(group: SettingsGroup): Promise<T> {
-  const defaults =
-    group === "ai"
-      ? DEFAULT_AI_SETTINGS
-      : group === "sms"
-        ? DEFAULT_SMS_SETTINGS
-        : group === "payment"
-          ? DEFAULT_PAYMENT_SETTINGS
-          : DEFAULT_GENERAL_SETTINGS;
+export async function getSettings<T extends AnySettings>(group: SettingsGroup): Promise<T> {
+  const defaults = DEFAULT_SETTINGS[group];
 
   const cached = cache.get(group);
   if (cached && Date.now() - cached.loadedAt < CACHE_TTL) {
-    return deepMerge(defaults, cached.data as Partial<T>);
+    // Invariant: callers instantiate T as the settings type that matches
+    // `group` (ai→AISettings, sms→SMSSettings, …) — this cast is the single
+    // union→generic boundary of the settings API.
+    return deepMerge(defaults, cached.data as Partial<T>) as T;
   }
 
   try {
     const row = await db.setting.findUnique({ where: { key: group } });
     const parsed = row ? (JSON.parse(row.value) as Record<string, unknown>) : {};
     cache.set(group, { data: parsed, loadedAt: Date.now() });
-    return deepMerge(defaults, parsed as Partial<T>);
+    return deepMerge(defaults, parsed as Partial<T>) as T;
   } catch {
     return defaults as T;
   }
@@ -202,7 +207,7 @@ export function invalidateSettingsCache(group?: SettingsGroup): void {
 }
 
 /** Mask sensitive settings before sending to client */
-export function maskSecrets<T extends Record<string, unknown>>(obj: T): T {
+export function maskSecrets<T extends object>(obj: T): T {
   const masked = { ...obj };
   const secretKeys = [
     "apiKey",

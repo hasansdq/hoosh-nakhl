@@ -181,7 +181,8 @@ export function MenuManager({ initialFilter }: { initialFilter?: string } = {}) 
     fd.append("file", file);
     fd.append("kind", "food");
     try {
-      const res = await fetch("/api/upload", { method: "POST", body: fd });
+      // admin-authenticated generic image upload endpoint (R2-backed)
+      const res = await fetch("/api/admin/upload", { method: "POST", body: fd });
       const data = await res.json();
       clearInterval(timer);
       if (data.success) {
@@ -446,7 +447,7 @@ export function MenuManager({ initialFilter }: { initialFilter?: string } = {}) 
       )}
 
       {/* create/edit dialog */}
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen} dir="rtl">
+      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto rounded-2xl" aria-describedby={undefined}>
           <DialogHeader>
             <DialogTitle>{editing ? `ویرایش «${editing.name}»` : "افزودن آیتم جدید به منو"}</DialogTitle>
@@ -737,7 +738,7 @@ export function MenuManager({ initialFilter }: { initialFilter?: string } = {}) 
       </Dialog>
 
       {/* delete confirm */}
-      <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)} dir="rtl">
+      <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
         <AlertDialogContent className="rounded-2xl">
           <AlertDialogHeader>
             <AlertDialogTitle>حذف «{deleteTarget?.name}»؟</AlertDialogTitle>

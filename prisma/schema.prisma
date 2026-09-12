@@ -1,13 +1,32 @@
 // Nakhl Restaurant - Rafsanjan | رستوران نخل رفسنجان
 // Professional modular schema
+//
+// Cloudflare Workers deployment:
+//  - The `prisma-client` generator emits a pure TypeScript client into
+//    `src/generated/prisma` (no Rust query engine binary — Workers-compatible).
+//  - `driverAdapters` + `queryCompiler` let the client execute queries through
+//    the Cloudflare D1 binding (see src/lib/db.ts → @prisma/adapter-d1).
+//  - DDL for Cloudflare D1 is generated with:
+//      bunx prisma migrate diff --from-empty --to-schema-datamodel prisma/schema.prisma --script > migrations/0001_init.sql
+//    and applied to D1 with `wrangler d1 migrations apply` (see package.json db:* scripts).
 
 generator client {
-  provider = "prisma-client-js"
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+
+  // "workerd" emits the WebAssembly query compiler (no native .so engine),
+  // which runs both on Cloudflare Workers and in local Node (next dev).
+  runtime = "workerd"
 }
 
 datasource db {
   provider = "sqlite"
-  url      = env("DATABASE_URL")
+
+  // CLI-only placeholder (migrate diff / generate). The application runtime
+  // always goes through the D1 binding (src/lib/db.ts) and never opens this
+  // file — production runs on Cloudflare D1. A literal URL keeps `prisma
+  // generate` working in CI/Cloudflare Builds without any .env present.
+  url = "file:./cli-only.db"
 }
 
 // ============ Users & Auth ============
@@ -269,6 +288,19 @@ model Review {
   @@unique([userId, menuItemId])
   @@index([menuItemId, status])
   @@index([status, createdAt])
+}
+
+// ============ Site Content (CMS) ============
+// Admin-managed static texts & images of the storefront.
+// The field registry (key → label/type/default) lives in code
+// (src/lib/content-defs.ts) — rows here are *overrides* of those defaults,
+// so a missing row always falls back to the built-in default value.
+model SiteContent {
+  id        String   @id @default(cuid())
+  key       String   @unique // e.g. home.hero.title — must exist in the registry
+  value     String   @default("")
+  updatedBy String? // admin username
+  updatedAt DateTime @updatedAt
 }
 
 // ============ Settings & Admin ============
