@@ -4,25 +4,24 @@
  * Reads prisma/seed-data.json and emits plain SQL files for Cloudflare D1
  * (applied with `wrangler d1 execute DB --local|--remote --file ...`):
  *
- *   seed/seed-core.sql      — categories, menu items, coupons, admin user
+ *   seed/seed-core.sql      — categories, menu items, coupons
  *                             (idempotent: INSERT OR IGNORE on unique keys)
  *   seed/settings-dev.sql   — development settings (zai AI, dev OTP, payment
  *                             simulation — for the local Miniflare D1)
  *   seed/settings-prod.sql  — production-safe settings (openrouter, no dev
  *                             OTP, real ZarinPal — for the remote D1)
  *
+ * SECURITY: the admin account is deliberately NOT seeded here — no password
+ * (not even hashed) belongs in a committed SQL file. Use
+ * `bun run db:admin:local` / `bun run db:admin:remote`
+ * (scripts/bootstrap-admin-d1.ts) to create the admin from env credentials.
+ *
  * Run:  bun scripts/generate-seed-sql.ts
- * (Regenerating produces a fresh random scrypt salt for the admin password.)
  */
-import crypto from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
 import seedData from "../prisma/seed-data.json" with { type: "json" };
 
 type Row = Record<string, unknown>;
-
-const ADMIN_USERNAME = process.env.ADMIN_USERNAME || "rayantech";
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "Hasan78484@";
-const ADMIN_DISPLAY_NAME = "مدیر رستوران نخل";
 
 /** SQL string literal with proper escaping. */
 function sqlStr(value: string | null | undefined): string {
@@ -39,13 +38,6 @@ function sqlInt(value: number | null | undefined, fallback: number | null = null
     return fallback === null ? "NULL" : String(fallback);
   }
   return String(value);
-}
-
-/** Mirrors src/lib/auth.ts scrypt scheme: `salt:hash` (hex). */
-function hashPassword(password: string): string {
-  const salt = crypto.randomBytes(16).toString("hex");
-  const hash = crypto.scryptSync(password, salt, 64).toString("hex");
-  return `${salt}:${hash}`;
 }
 
 function valueList(values: string[]): string {
@@ -126,20 +118,6 @@ for (const c of seedData.coupons as Row[]) {
     ])};`,
   );
 }
-lines.push("");
-
-// ---------- admin ----------
-lines.push("-- ===== Admin user =====");
-lines.push(`-- username: ${ADMIN_USERNAME}${ADMIN_PASSWORD === "Hasan78484@" ? " (DEFAULT password — change it from the admin panel immediately!)" : ""}`);
-lines.push(
-  `INSERT OR IGNORE INTO "AdminUser" ("id", "username", "passwordHash", "displayName", "failedAttempts") VALUES ${valueList([
-    sqlStr("admin-seed-root"),
-    sqlStr(ADMIN_USERNAME),
-    sqlStr(hashPassword(ADMIN_PASSWORD)),
-    sqlStr(ADMIN_DISPLAY_NAME),
-    sqlInt(0),
-  ])};`,
-);
 lines.push("");
 
 mkdirSync("seed", { recursive: true });

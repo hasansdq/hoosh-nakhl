@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { ok, fail, requireUser, logAudit } from "@/lib/api";
 import { getSettings, type PaymentSettings, type GeneralSettings } from "@/lib/settings";
 import { zarinpalRequest } from "@/lib/payment/zarinpal";
+import { getPublicOrigin } from "@/lib/public-url";
 import { parseDraft, computePricing } from "@/lib/chat/engine";
 import { checkCoupon } from "@/lib/coupons";
 import { rateLimit } from "@/lib/auth";
@@ -151,10 +152,12 @@ export async function POST(req: NextRequest) {
       data: { stage: "TRACKING", orderId: order.id, draft: JSON.stringify({ items: [] }) },
     });
 
-    // request payment
+    // request payment — the callback MUST point at the public origin the
+    // visitor's browser sees (https://domain.tld behind the DirectAdmin proxy),
+    // NOT the internal loopback hop the request came through.
     const callbackUrl =
       paymentSettings.callbackUrl ||
-      `${new URL(req.url).origin}/api/payment/callback`;
+      `${getPublicOrigin(req)}/api/payment/callback`;
 
     const payResult = await zarinpalRequest(paymentSettings, {
       amountToman: order.total,

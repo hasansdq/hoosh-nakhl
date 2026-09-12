@@ -44,6 +44,10 @@ wrangler d1 execute DB --local --file seed/seed-core.sql
 # 正式 Cloudflare 生产请用 seed/settings-prod.sql（见 CLOUDFLARE-DEPLOY-FA.md）。
 wrangler d1 execute DB --local --file seed/settings-dev.sql
 
+# 管理员：seed 不再包含任何凭据（安全），首次启动时通过 env 或随机密码
+# 创建（幂等——已有管理员则原样保留）。随机密码只打印到本日志一次。
+bun scripts/bootstrap-admin-d1.ts --local || true
+
 # ── 2) Web 服务器：OpenNext worker on workerd（守护自愈）────────────────────
 echo "🏃 启动 wrangler dev (127.0.0.1:$PORT)..."
 (

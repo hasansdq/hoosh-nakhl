@@ -13,6 +13,8 @@
     "db:migrate:remote": "wrangler d1 migrations apply DB --remote",
     "db:seed:local": "wrangler d1 execute DB --local --file seed/seed-core.sql && wrangler d1 execute DB --local --file seed/settings-dev.sql",
     "db:seed:remote": "wrangler d1 execute DB --remote --file seed/seed-core.sql && wrangler d1 execute DB --remote --file seed/settings-prod.sql",
+    "db:admin:local": "bun scripts/bootstrap-admin-d1.ts --local",
+    "db:admin:remote": "bun scripts/bootstrap-admin-d1.ts --remote",
     "db:seed:generate": "bun scripts/generate-seed-sql.ts",
     "icons:generate": "bun scripts/generate-favicons.ts",
     "build": "next build",

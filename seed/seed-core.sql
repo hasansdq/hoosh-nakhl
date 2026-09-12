@@ -50,6 +50,9 @@ INSERT OR IGNORE INTO "Coupon" ("id", "code", "title", "type", "value", "minOrde
 INSERT OR IGNORE INTO "Coupon" ("id", "code", "title", "type", "value", "minOrder", "maxDiscount", "usageLimit", "usedCount", "perUserLimit", "startsAt", "expiresAt", "isActive", "updatedAt") VALUES ('cmtb9t3zd0002rszl8kzpvp9f', 'PALM20', '۲۰٪ ویژه پایان هفته (حداکثر ۱۵۰ هزار)', 'PERCENT', 20, 500000, 150000, 100, 0, 1, NULL, '2026-11-25T08:38:20.501Z', 1, CURRENT_TIMESTAMP);
 
 -- ===== Admin user =====
--- username: rayantech (DEFAULT password — change it from the admin panel immediately!)
-INSERT OR IGNORE INTO "AdminUser" ("id", "username", "passwordHash", "displayName", "failedAttempts") VALUES ('admin-seed-root', 'rayantech', '83c32a2a13492cca30c3870712b64efe:ebd1598457b6c3744a889f4fb491adeb5a367b150e8863e524bb715602b978aeaa4f2c76fd231e0ba7b4933dc63066e02ae0081edc0edfe07676aa8d8a249ea8', 'مدیر رستوران نخل', 0);
+-- SECURITY: the admin is NOT seeded here (no credentials belong in committed SQL).
+-- Create it after migrating, from environment credentials:
+--   local:  bun run db:admin:local   (ADMIN_USERNAME / ADMIN_PASSWORD)
+--   remote: bun run db:admin:remote
+-- (scripts/bootstrap-admin-d1.ts — idempotent, preserves existing admins)
 

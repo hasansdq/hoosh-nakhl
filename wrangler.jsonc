@@ -75,8 +75,13 @@
   ],
 
   // Non-secret runtime variables. Secrets go to `wrangler secret put …`.
+  // ADMIN_NOTIFY_KEY below is the DEV/preview value (local Miniflare + z-space
+  // preview). It is visible in the repo, so it must NEVER be trusted in
+  // production — deploy with:  wrangler secret put ADMIN_NOTIFY_KEY
+  // (a Workers secret overrides the var with the same name; the realtime
+  // Durable Object also refuses keys shorter than 16 chars).
   "vars": {
-    "ADMIN_NOTIFY_KEY": "nakhl-notify-CHANGE-ME"
+    "ADMIN_NOTIFY_KEY": "dev-preview-nakhl-3f8c21a9d74b6e05c2af417b"
   },
 
   "observability": {

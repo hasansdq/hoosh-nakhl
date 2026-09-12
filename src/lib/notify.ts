@@ -37,9 +37,17 @@ interface EmitOptions {
   room?: string;
 }
 
-async function notifyKey(): Promise<string> {
+async function notifyKey(): Promise<string | null> {
   const env = await getCloudflareEnv();
-  return env?.ADMIN_NOTIFY_KEY ?? process.env.ADMIN_NOTIFY_KEY ?? DEFAULT_NOTIFY_KEY;
+  const key = env?.ADMIN_NOTIFY_KEY ?? process.env.ADMIN_NOTIFY_KEY;
+  // fail-closed: a missing/short key can never authenticate against the DO
+  // (which generates an unguessable ephemeral key when unconfigured).
+  // The weak constant default is kept ONLY for the local sandbox dev path
+  // (notify-service on localhost) — never for the Workers/Docker runtime.
+  if (WORKERS_MODE || process.env.NAKHL_SQLITE_PATH) {
+    return key && key.length >= 16 ? key : null;
+  }
+  return key ?? DEFAULT_NOTIFY_KEY;
 }
 
 async function emitViaDurableObject(opts: EmitOptions): Promise<void> {
@@ -50,12 +58,19 @@ async function emitViaDurableObject(opts: EmitOptions): Promise<void> {
     console.warn("[notify] REALTIME Durable Object binding is not configured");
     return;
   }
+  const key = await notifyKey();
+  if (!key) {
+    // ADMIN_NOTIFY_KEY unset/too short — the DO will reject us anyway; skip
+    // the network hop and say so once.
+    console.warn("[notify] ADMIN_NOTIFY_KEY is not configured (min 16 chars) — realtime push skipped");
+    return;
+  }
   const stub = namespace.get(namespace.idFromName(DO_INSTANCE_NAME));
   const response = await stub.fetch(DO_EMIT_URL, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "x-notify-key": await notifyKey(),
+      "x-notify-key": key,
     },
     body: JSON.stringify({
       event: opts.event,
@@ -70,11 +85,17 @@ async function emitViaDurableObject(opts: EmitOptions): Promise<void> {
 }
 
 async function emitViaLocalService(opts: EmitOptions): Promise<void> {
+  // Docker/VPS path (app-server.js): the same fail-closed rule — a weak or
+  // missing key can never authenticate, so skip the hop instead of sending it.
+  const key = process.env.ADMIN_NOTIFY_KEY;
+  if (process.env.NAKHL_SQLITE_PATH && (!key || key.length < 16)) {
+    return;
+  }
   await fetch(LOCAL_EMIT_URL, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "x-notify-key": process.env.ADMIN_NOTIFY_KEY ?? DEFAULT_NOTIFY_KEY,
+      "x-notify-key": key ?? DEFAULT_NOTIFY_KEY,
     },
     body: JSON.stringify({
       event: opts.event,

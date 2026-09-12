@@ -58,7 +58,7 @@ const CUSTOMER_ROOM_RE = /^customer:NK-[A-Z0-9]{1,13}$/;
 const ORDER_NUMBER_RE = /^NK-[A-Z0-9]{1,13}$/;
 const EVENT_NAME_RE = /^[a-z][a-z0-9:\-]{1,40}$/i;
 const MAX_EMIT_BODY_BYTES = 64 * 1024;
-const DEFAULT_NOTIFY_KEY = "nakhl-notify-2024";
+const MIN_NOTIFY_KEY_LENGTH = 16;
 const ADMINS_ROOM = "admins";
 
 const OPEN = 1; // WebSocket.readyState OPEN
@@ -66,6 +66,8 @@ const OPEN = 1; // WebSocket.readyState OPEN
 export class NakhlRealtime {
   private admins = new Set<WebSocket>();
   private customers = new Map<string, Set<WebSocket>>();
+  /** lazily generated when no ADMIN_NOTIFY_KEY is configured (fail-closed) */
+  private ephemeralKey: string | undefined;
 
   constructor(
     private readonly state: RealtimeDurableObjectState,
@@ -183,8 +185,20 @@ export class NakhlRealtime {
 
   // ---------- server-to-server emit (x-notify-key protected) ----------
 
+  /**
+   * Shared secret for admin-join and /emit.
+   * SECURITY: no guessable fallback — with ADMIN_NOTIFY_KEY unset or too
+   * short (< 16 chars) a RANDOM per-instance value is used, which makes
+   * admin-join and /emit fail closed (nobody can guess it) instead of
+   * letting anyone who read the repo join the admins room. Set a real
+   * secret in production: `wrangler secret put ADMIN_NOTIFY_KEY`.
+   */
   private notifyKey(): string {
-    return this.env.ADMIN_NOTIFY_KEY || DEFAULT_NOTIFY_KEY;
+    const configured = this.env.ADMIN_NOTIFY_KEY;
+    if (configured && configured.length >= MIN_NOTIFY_KEY_LENGTH) return configured;
+    if (configured) console.warn("[realtime] ADMIN_NOTIFY_KEY shorter than 16 chars — using an ephemeral random key (admin-join/emit will fail until a real secret is set)");
+    this.ephemeralKey ??= `ephemeral-${crypto.randomUUID()}`;
+    return this.ephemeralKey;
   }
 
   private async handleEmit(request: Request): Promise<Response> {

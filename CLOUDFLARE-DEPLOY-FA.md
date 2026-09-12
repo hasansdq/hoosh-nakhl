@@ -55,12 +55,15 @@ bunx wrangler secret put ZARINPAL_FORCE_REAL        # مقدار: 1
 # ساخت اسکیمای D1 (از migrations/0001_init.sql)
 bun run db:migrate:remote
 
-# داده‌های اولیه: منو (۷ دسته / ۳۰ آیتم)، ۳ کوپن، ادمین، تنظیمات production-safe
+# داده‌های اولیه: منو (۷ دسته / ۳۰ آیتم)، ۳ کوپن، تنظیمات production-safe
 bun run db:seed:remote
+
+# ساخت ادمین — از env، هرگز credential در ریپو نیست:
+ADMIN_USERNAME='my-admin' ADMIN_PASSWORD='رمز قوی' bun run db:admin:remote
 ```
 
-- ادمین پیش‌فرض: `rayantech` / `Hasan78484@` — **بلافاصله بعد از اولین ورود از پنل عوض کنید.**
-- برای رمز دلخواه: `ADMIN_PASSWORD='رمز جدید' bun run db:seed:generate` سپس فقط فایل `seed/seed-core.sql` را با `--remote` اجرا کنید.
+- **امنیت**: seed دیگر هیچ ادمین/رمزی ندارد (حتی هش‌شده). ادمین فقط با دستور بالا از محیط ساخته می‌شود؛ اگر ADMIN_PASSWORD نگذارید، رمز تصادفی قوی تولید و فقط یک بار در همان خروجی چاپ می‌شود.
+- این دستور **idempotent** است: اگر ادمینی وجود داشته باشد، دست نمی‌زند (ری‌دیپلوی امن).
 - تنظیمات production-safe یعنی: AI=OpenRouter (بدون کلید تا از پنل وارد کنید)، پیامک=none، پرداخت=درگاه واقعی (بدون شبیه‌سازی).
 
 ## ۵) بیلد و دیپلوی

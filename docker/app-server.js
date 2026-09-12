@@ -45,7 +45,31 @@ const { Server } = require("socket.io");
 const PORT = parseInt(process.env.PORT ?? "3000", 10);
 const HOSTNAME = process.env.HOSTNAME ?? "0.0.0.0";
 const APP_DIR = __dirname;
-const NOTIFY_KEY = process.env.ADMIN_NOTIFY_KEY ?? "nakhl-notify-2024";
+
+// Shared secret for POST /emit and the admin-join websocket handshake.
+// SECURITY: there is deliberately NO guessable default — /emit is reachable
+// through the public reverse proxy, so a weak constant key would let anyone
+// push fake events into admin panels. docker/entrypoint.sh always exports a
+// strong persisted key; if the env var is missing (server launched outside
+// the entrypoint) we fall back to an EPHEMERAL random key: public emits are
+// then impossible (the Next backend cannot authenticate) instead of trivial.
+function resolveNotifyKey() {
+  const fromEnv = process.env.ADMIN_NOTIFY_KEY;
+  if (fromEnv && fromEnv.length >= 16) return fromEnv;
+  if (fromEnv) {
+    console.warn(
+      "[server] ADMIN_NOTIFY_KEY is shorter than 16 chars — ignoring it and generating an ephemeral key",
+    );
+  }
+  const ephemeral = `ephemeral-${require("node:crypto").randomBytes(24).toString("hex")}`;
+  console.warn(
+    "[server] ADMIN_NOTIFY_KEY is not set — generated an EPHEMERAL random key. " +
+      "The Next.js backend will reject /emit pushes until a key is provided " +
+      "(run the container via docker/entrypoint.sh or set ADMIN_NOTIFY_KEY).",
+  );
+  return ephemeral;
+}
+const NOTIFY_KEY = resolveNotifyKey();
 
 const ADMINS_ROOM = "admins";
 const MAX_EMIT_BODY_BYTES = 64 * 1024;

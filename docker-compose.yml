@@ -53,6 +53,14 @@ services:
       NAKHL_NOTIFY_URL: http://127.0.0.1:3000/emit
       # production-safe seeding profile (dev = visible OTP, only for testing!)
       NAKHL_SEED_PROFILE: ${NAKHL_SEED_PROFILE:-prod}
+      # ---- payment kill-switch (.defaults ON — «پرداخت آزمایشی کاملاً غیرفعال
+      # در نسخهٔ نهایی») --------------------------------------------------
+      # With ZARINPAL_FORCE_REAL=1 the simulated gateway is dead at THREE
+      # layers: /api/payment/simulate returns 403 for everyone, zarinpalRequest
+      # refuses to mint SIM-* authorities, and real payments require a
+      # merchantId configured in the admin panel. To re-enable simulation on a
+      # PRIVATE staging box, set ZARINPAL_FORCE_REAL=0 in .env.
+      ZARINPAL_FORCE_REAL: ${ZARINPAL_FORCE_REAL:-1}
       # sandbox-only supervisor must never wake up in production
       NAKHL_SUPERVISE_DEV: "0"
       TZ: ${TZ:-Asia/Tehran}

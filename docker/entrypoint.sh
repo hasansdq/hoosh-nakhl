@@ -17,6 +17,7 @@
 set -eu
 
 DATA_DIR="${NAKHL_DATA_DIR:-/app/data}"
+APP_DIR="${NAKHL_APP_DIR:-/app}"
 SECRETS_FILE="${DATA_DIR}/secrets.env"
 
 log() { echo "[entrypoint] $*"; }
@@ -36,7 +37,13 @@ set_secret() {
   fi
 }
 
-random_hex() { head -c 24 /dev/urandom | od -An hex | tr -d ' \n'; }
+random_hex() {
+  # od -t x1 is the POSIX-portable hex dump. The previous `od -An hex` was
+  # silently broken on standard systems: od treated «hex» as a FILE name,
+  # failed, and the pipeline produced an EMPTY string — which would have
+  # made ADMIN_NOTIFY_KEY a guessable 6-char value in production Docker.
+  head -c 24 /dev/urandom | od -An -t x1 | tr -d ' \n'
+}
 
 if [ -n "${ADMIN_NOTIFY_KEY:-}" ]; then
   # operator-provided key wins; persist it so it can never be lost silently
@@ -58,12 +65,29 @@ fi
 
 # ---------- 3. forward-only migrations ----------------------------------------
 log "applying database migrations (forward-only, transactional)…"
-node /app/scripts/migrate.mjs
+node "${APP_DIR}/scripts/migrate.mjs"
+
+# ---------- 3b. production-safety posture check --------------------------------
+# Loud, unmissable warnings when the container boots in a NON-production-safe
+# posture. These never block the boot (the operator may be running a private
+# staging box on purpose) — but nobody can say they were not told.
+if [ "${ZARINPAL_FORCE_REAL:-}" != "1" ]; then
+  log "⚠⚠  WARNING: ZARINPAL_FORCE_REAL is NOT \"1\" — the SIMULATED payment gateway is LIVE!"
+  log "⚠⚠  Customers could complete orders without paying real money."
+  log "⚠⚠  For production set ZARINPAL_FORCE_REAL=1 in .env (docker-compose defaults to it)."
+fi
+if [ "${NAKHL_SEED_PROFILE:-prod}" = "dev" ]; then
+  log "⚠⚠  WARNING: NAKHL_SEED_PROFILE=dev — OTP codes are exposed in API responses!"
+  log "⚠⚠  Only acceptable on a PRIVATE staging box. Production must use NAKHL_SEED_PROFILE=prod."
+fi
+if [ -n "${ADMIN_PASSWORD:-}" ]; then
+  log "note: ADMIN_PASSWORD was set through the environment — change it from the admin panel after first login, then remove it from .env"
+fi
 
 # ---------- 4. idempotent seed + admin bootstrap -------------------------------
 log "seeding (idempotent — existing rows and admin credentials preserved)…"
-node /app/scripts/seed.mjs
+node "${APP_DIR}/scripts/seed.mjs"
 
 # ---------- 5. hand over to the production server ------------------------------
 log "starting Nakhl production server on ${PORT:-3000}…"
-exec node /app/app-server.js
+exec node "${APP_DIR}/app-server.js"
