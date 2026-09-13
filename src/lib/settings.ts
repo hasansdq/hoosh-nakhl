@@ -33,6 +33,8 @@ export interface SMSSettings {
   melipayamakUsername: string;
   melipayamakPassword: string;
   melipayamakFrom: string;
+  /** کد پترن خدماتی (bodyId) — از پنل ملی‌پیامک؛ خالی = ارسال ساده */
+  melipayamakPatternCode: string;
   // SMS.IR
   smsirApiKey: string;
   smsirFrom: string;
@@ -98,6 +100,7 @@ export const DEFAULT_SMS_SETTINGS: SMSSettings = {
   melipayamakUsername: "",
   melipayamakPassword: "",
   melipayamakFrom: "",
+  melipayamakPatternCode: "",
   smsirApiKey: "",
   smsirFrom: "",
   smsirTemplateId: "",
