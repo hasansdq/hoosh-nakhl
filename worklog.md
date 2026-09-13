@@ -1264,3 +1264,20 @@ Stage Summary:
 - ✅ بدون تغییر ظاهر/امکانات؛ بدون هیچ اطلاعات حساس در ریپو؛ داکرایز و دو-رانتایمی بودن پروژه دست‌نخورده
 - ⚠️ داکر daemon در سندباکس موجود نیست → «تست Docker» با اجرای همان مراحل Dockerfile (بیلد standalone واقعی + بوت واقعی app-server + E2E) انجام شد؛ اجرای docker compose روی VPS کاربر نهایی است
 - بک‌لاگ: Web Push، نظرات عمومی، ریسپانسیو ادمین، گسترش CMS به CartView/TrackView
+
+---
+Task ID: apache-fix-1
+Agent: Z.ai Code (main)
+Task: اصلاح سینتکس شرطی RequestHeader در docker/directadmin/nakhl-proxy.conf (فقط همین تغییر، به درخواست صریح کاربر برای دیپلوی تمیز آپاچی/DirectAdmin)
+
+Work Log:
+- خطوط ۶۳–۶۴ اصلاح شدند — قبل: `RequestHeader set X-Forwarded-Proto "https" env:HTTPS` / `RequestHeader set X-Forwarded-Proto "http" !env:HTTPS` → بعد: `env=HTTPS` / `env=!HTTPS` (سینتکس صحیح شرط env در mod_headers آپاچی ۲.۴)
+- هیچ تغییر دیگری در فایل/پروژه انجام نشد (دستور صریح کاربر)
+- تأیید حضور در Git: فایل ترک‌شده، `git check-ignore` خالی، `git ls-files docker/directadmin/` آن را نشان می‌دهد؛ .dockerignore هیچ الگوی directadmin ندارد
+- کامیت ایزوله فقط همین فایل: `c39bae8` «fix(apache): correct RequestHeader env conditional syntax to env=HTTPS / env=!HTTPS for DirectAdmin proxy vhost» (working tree قبل از کامیت فقط همین یک تغییر ۲خطی بود)
+- سلامت: dev.log بدون خطا؛ /api/health → ok/db:up؛ cronهای ۱۵دقیقه‌ای قبلی همه «Disabled due to exec limits exceeded» بودند → job جدید ساخته شد
+
+Stage Summary:
+- ✅ سینتکس Apache درست شد: در vhost امن (HTTPS) هدر https و در vhost ساده http ست می‌شود — رفتار X-Forwarded-Proto (مهم برای callback https زرین‌پال) حفظ شد
+- ✅ تغییر فقط دو خط، کامیت تک‌فایلی تمیز، بدون دست‌زدن به ظاهر/امکانات/بقیهٔ کانفیگ
+- نکته: بعد از این کامیت، کانفیگ کاستوم DA (cust_httpd) را روی سرور دوباره ذخیره/rebuild کنید تا نسخهٔ جدید اعمال شود
