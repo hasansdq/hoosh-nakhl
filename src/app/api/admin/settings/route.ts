@@ -40,6 +40,7 @@ const groupSchemas: Record<string, z.ZodTypeAny> = {
     melipayamakUsername: z.string().max(100).optional(),
     melipayamakPassword: z.string().max(100).optional(),
     melipayamakFrom: z.string().max(30).optional(),
+    melipayamakPatternCode: z.string().max(30).optional(),
     smsirApiKey: z.string().max(300).optional(),
     smsirFrom: z.string().max(30).optional(),
     smsirTemplateId: z.string().max(30).optional(),

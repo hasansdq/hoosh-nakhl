@@ -24,17 +24,23 @@ function toLocalPhone(phone: string): string {
  * ملی‌پیامک — دو نسل وب‌سرویس:
  *
  * ۱) کنسول جدید (Token/API-Key) — مستندات رسمی: console.melipayamak.com
- *    POST https://console.melipayamak.com/api/send/simple/{token}
+ *    ارسال ساده:  POST https://console.melipayamak.com/api/send/simple/{token}
  *      body: { from, to, text }          → from الزامی است
- *      پاسخ موفق: { recId: <شناسه> , status: "" }
- *      پاسخ خطا:   { status: "پیام خطا" } یا خطای اعتبارسنجی ASP.NET
- *    GET  https://console.melipayamak.com/api/receive/credit/{token}
- *      پاسخ: { amount: <اعتبار>, status: "" }   → برای «تست اتصال» بدون ارسال پیامک
+ *    ارسال پترن (خط خدماتی اشتراکی):
+ *                 POST https://console.melipayamak.com/api/send/shared/{token}
+ *      body: { to, bodyId, args: ["کد", ...] }
+ *      → پترن باید از قبل در پنل ملی‌پیامک ساخته و تأیید شده باشد؛
+ *        bodyId = کد پترن، args = مقادیر متغیرهای پترن به‌ترتیب (%0، %1، ...)
+ *        (متد sendShared کتابخانهٔ رسمی node-melipayamak — همین قرارداد)
+ *    اعتبار:      GET  https://console.melipayamak.com/api/receive/credit/{token}
  *
  * ۲) پنل قدیمی (username/password) — rest.payamak-panel.com
- *    POST https://rest.payamak-panel.com/api/SendSMS/SendSMS  { username, password, to, from, text, isFlash }
- *      RetStatus === 1 ⇒ موفق
- *    POST https://rest.payamak-panel.com/api/SendSMS/GetCredit { username, password }
+ *    ارسال ساده:  POST /api/SendSMS/SendSMS  { username, password, to, from, text, isFlash }
+ *    ارسال پترن:  POST /api/SendSMS/BaseServiceNumber  (form-urlencoded)
+ *      username, password, to, bodyId (کد پترن), text (متغیرها با «؛» جدا)
+ *      → مستندات رسمی SendByBaseNumber2: ReturnValue = recId (بیش از ۱۰ رقم ⇒ موفق)
+ *        یا کد خطا (۰ = اعتبارنامه اشتباه، ‎-4 = کد پترن نامعتبر/تأییدنشده، ...)
+ *    اعتبار:      POST /api/SendSMS/GetCredit { username, password }
  */
 
 const MELIPAYAMAK_CONSOLE_BASE = "https://console.melipayamak.com/api";
@@ -203,6 +209,188 @@ async function sendMelipayamakLegacy(
   }
 }
 
+// ============ Melipayamak (ارسال با پترن خدماتی) ============
+
+/**
+ * اعتبارسنجی مشترک کد پترن — عدد صحیح مثبت است که پنل ملی‌پیامک بعد از
+ * تأیید پترن صادر می‌کند (مثلاً 254).
+ */
+function validatePatternCode(settings: SMSSettings): { code: string; error?: string } {
+  const code = (settings.melipayamakPatternCode ?? "").trim();
+  if (!code) {
+    return { code, error: "کد پترن ملی‌پیامک تنظیم نشده است" };
+  }
+  if (!/^\d+$/.test(code) || Number(code) <= 0) {
+    return { code, error: "کد پترن ملی‌پیامک باید عدد باشد (کد تأییدشدهٔ پترن در پنل ملی‌پیامک)" };
+  }
+  return { code };
+}
+
+/**
+ * ارسال با پترن از «خط خدماتی اشتراکی» — کنسول جدید (API-Key):
+ * POST /api/send/shared/{token}  body: { to, bodyId, args }
+ * طبق مستندات رسمی ملی‌پیامک (متد SendShared) — تحویل حتی به لیست سیاه مخابرات.
+ */
+async function sendMelipayamakConsolePattern(
+  settings: SMSSettings,
+  to: string,
+  args: string[]
+): Promise<SmsResult> {
+  const apiKey = (settings.melipayamakApiKey ?? "").trim();
+  if (!apiKey) {
+    return { success: false, provider: "melipayamak", error: "کلید کنسول ملی‌پیامک تنظیم نشده است" };
+  }
+  const { code: patternCode, error } = validatePatternCode(settings);
+  if (error) {
+    return { success: false, provider: "melipayamak", error };
+  }
+
+  try {
+    const res = await fetch(`${MELIPAYAMAK_CONSOLE_BASE}/send/shared/${encodeURIComponent(apiKey)}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Cache-Control": "no-cache",
+      },
+      body: JSON.stringify({
+        to: toLocalPhone(to),
+        bodyId: Number(patternCode),
+        args,
+      }),
+      signal: AbortSignal.timeout(20000),
+    });
+
+    const raw = await res.text();
+    let body: ConsoleResponse = {};
+    try {
+      body = JSON.parse(raw) as ConsoleResponse;
+    } catch {
+      return {
+        success: false,
+        provider: "melipayamak",
+        error: `پاسخ نامعتبر از کنسول ملی‌پیامک (کد ${res.status})`,
+      };
+    }
+
+    if (consoleSuccess(body)) {
+      return { success: true, provider: "melipayamak", message: "ارسال با پترن خدماتی انجام شد" };
+    }
+
+    const validation = parseValidationErrors(body);
+    if (validation) {
+      return { success: false, provider: "melipayamak", error: validation };
+    }
+
+    return {
+      success: false,
+      provider: "melipayamak",
+      error: body.status?.trim() || `خطای پنل ملی‌پیامک (کد ${res.status})`,
+    };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "خطای نامشخص";
+    const timedOut = msg.toLowerCase().includes("timeout") || msg.toLowerCase().includes("abort");
+    return {
+      success: false,
+      provider: "melipayamak",
+      error: timedOut
+        ? "پاسخ ملی‌پیامک بیش از حد طول کشید — اتصال سرور به console.melipayamak.com را بررسی کنید"
+        : `خطا در ارتباط با ملی‌پیامک: ${msg}`,
+    };
+  }
+}
+
+/** ترجمهٔ کدهای خطای متد BaseServiceNumber پنل قدیمی (مستندات رسمی ملی‌پیامک) */
+function legacyPatternErrorMessage(value: number): string | null {
+  switch (value) {
+    case 0: return "نام کاربری یا رمز عبور ملی‌پیامک صحیح نیست";
+    case 2: return "اعتبار پنل ملی‌پیامک کافی نیست";
+    case 6: return "سامانهٔ ملی‌پیامک در حال به‌روزرسانی است — بعداً تلاش کنید";
+    case 7: return "متن ارسالی حاوی کلمهٔ فیلترشده است";
+    case 10: return "کاربر پنل ملی‌پیامک فعال نیست";
+    case 11: return "پیامک ارسال نشد — با پشتیبانی ملی‌پیامک تماس بگیرید";
+    case 12: return "مدارک کاربر پنل ملی‌پیامک کامل نیست";
+    case 16: return "شمارهٔ گیرنده یافت نشد";
+    case 17: return "متن پیامک خالی است";
+    case 18: return "شمارهٔ گیرنده نامعتبر است";
+    case 19: return "از محدودیت ساعتی ارسال ملی‌پیامک فراتر رفته‌اید";
+    case 35: return "شمارهٔ گیرنده در لیست سیاه مخابرات است";
+    case -1: return "دسترسی وب‌سرویس خدماتی برای پنل شما فعال نیست — با پشتیبانی ملی‌پیامک تماس بگیرید";
+    case -2: return "در هر ارسال پترن فقط یک شمارهٔ گیرنده مجاز است";
+    case -3: return "خط خدماتی در پنل شما تعریف نشده است — با پشتیبانی ملی‌پیامک تماس بگیرید";
+    case -4: return "کد پترن صحیح نیست یا توسط مدیر ملی‌پیامک تأیید نشده است";
+    case -5: return "متغیرهای ارسالی با پترن همخوانی ندارد — پترن باید دقیقاً یک متغیر (%0) برای کد تأیید داشته باشد";
+    case -6: return "خطای داخلی ملی‌پیامک — با پشتیبانی تماس بگیرید";
+    case -7: return "خطای شمارهٔ فرستنده — با پشتیبانی ملی‌پیامک تماس بگیرید";
+    case -10: return "متغیرهای ارسالی نباید حاوی لینک باشند";
+    case -108: return "IP شما به دلیل تلاش‌های ناموفق مسدود شده است";
+    case -109: return "ابتدا IP مجاز را در تنظیمات وب‌سرویس پنل ملی‌پیامک ثبت کنید";
+    case -110: return "به‌جای رمز عبور باید از API Key استفاده کنید (تنظیمات پنل ملی‌پیامک)";
+    case -111: return "IP درخواست‌کننده معتبر نیست — IP سرور را در پنل ملی‌پیامک ثبت کنید";
+    default: return null;
+  }
+}
+
+/**
+ * ارسال با پترن از «خط خدماتی اشتراکی» — پنل قدیمی (username/password):
+ * POST /api/SendSMS/BaseServiceNumber (form-urlencoded)
+ *   username, password, to, bodyId, text = متغیرها با «؛» جدا
+ * پاسخ: { Value: recId(>10 رقم ⇒ موفق) | کد خطا, RetStatus, StrRetStatus }
+ */
+async function sendMelipayamakLegacyPattern(
+  settings: SMSSettings,
+  to: string,
+  args: string[]
+): Promise<SmsResult> {
+  if (!settings.melipayamakUsername || !settings.melipayamakPassword) {
+    return { success: false, provider: "melipayamak", error: "نام کاربری/رمز ملی‌پیامک کامل نیست" };
+  }
+  const { code: patternCode, error } = validatePatternCode(settings);
+  if (error) {
+    return { success: false, provider: "melipayamak", error };
+  }
+
+  try {
+    const res = await fetch(`${MELIPAYAMAK_LEGACY_BASE}/BaseServiceNumber`, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8" },
+      body: new URLSearchParams({
+        username: settings.melipayamakUsername,
+        password: settings.melipayamakPassword,
+        to: toLocalPhone(to),
+        bodyId: patternCode,
+        text: args.join(";"),
+      }).toString(),
+      signal: AbortSignal.timeout(20000),
+    });
+    const body = (await res.json().catch(() => ({}))) as LegacyResponse;
+
+    // طبق مستندات رسمی: ReturnValue = recId عددی بلند ⇒ موفق؛ مقدارهای کوچک = کد خطا
+    const value = String(body.Value ?? "").trim();
+    if (/^\d{10,}$/.test(value)) {
+      return { success: true, provider: "melipayamak", message: "ارسال با پترن خدماتی انجام شد" };
+    }
+
+    const code = Number(value);
+    const mapped = Number.isFinite(code) ? legacyPatternErrorMessage(code) : null;
+    const fallbackCode = value || String(body.RetStatus ?? res.status);
+    return {
+      success: false,
+      provider: "melipayamak",
+      error:
+        mapped ??
+        (body.StrRetStatus === "UserNameAndPasswordFailed"
+          ? "نام کاربری یا رمز عبور ملی‌پیامک اشتباه است"
+          : body.StrRetStatus || `خطای پنل ملی‌پیامک (کد ${fallbackCode})`),
+    };
+  } catch (e) {
+    return {
+      success: false,
+      provider: "melipayamak",
+      error: e instanceof Error ? `خطا در ارتباط با ملی‌پیامک: ${e.message}` : "خطای نامشخص ملی‌پیامک",
+    };
+  }
+}
+
 async function sendMelipayamak(
   settings: SMSSettings,
   to: string,
@@ -260,11 +448,15 @@ async function testMelipayamakConnection(settings: SMSSettings): Promise<SmsResu
       if (res.ok && !hasErrorStatus) {
         const credit = Number(body.amount);
         const creditStr = amountKnown && Number.isFinite(credit) ? credit.toLocaleString("fa-IR") : null;
+        const patternCode = (settings.melipayamakPatternCode ?? "").trim();
+        const mode = patternCode
+          ? ` — ارسال کد تأیید با پترن خدماتی (کد ${patternCode})`
+          : " — ارسال ساده از خط اختصاصی";
         return {
           success: true,
           provider: "melipayamak",
           credit: amountKnown && Number.isFinite(credit) ? credit : undefined,
-          message: `اتصال به کنسول ملی‌پیامک برقرار است ✅${creditStr ? ` — اعتبار پنل: ${creditStr}` : ""}`,
+          message: `اتصال به کنسول ملی‌پیامک برقرار است ✅${creditStr ? ` — اعتبار پنل: ${creditStr}` : ""}${mode}`,
         };
       }
 
@@ -427,6 +619,17 @@ export async function sendOtpSms(
   }
 
   if (settings.provider === "melipayamak") {
+    // پترن خدماتی تنظیم شده؟ → ارسال OTP از «خط خدماتی اشتراکی» با کد پترن
+    // (پترن باید در خود پنل ملی‌پیامک ساخته و تأیید شده باشد و کد آن اینجا ثبت شود)
+    const patternCode = (settings.melipayamakPatternCode ?? "").trim();
+    if (patternCode) {
+      // پترن باید دقیقاً یک متغیر %0 برای کد تأیید داشته باشد
+      // (مثال پترن: «رستوران نخل\nکد تأیید شما: %0»)
+      const args = [code];
+      return settings.melipayamakAuthType === "apikey"
+        ? sendMelipayamakConsolePattern(settings, to, args)
+        : sendMelipayamakLegacyPattern(settings, to, args);
+    }
     return sendMelipayamak(settings, to, text);
   }
   if (settings.provider === "smsir") {

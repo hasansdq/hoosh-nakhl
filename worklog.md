@@ -1232,7 +1232,7 @@ Work Log:
   - OTP: بدون From → خطای فارسی الزامی بودن From · با From+کلید جعلی → خطای ملی‌پیامک به کاربر منتقل می‌شود؛ devMode → devCode در سندباکس
   - agent-browser (UI): ورود پنل → تنظیمات → تب پیامک → انتخاب ملی‌پیامک → کلید/From جعلی → «تست اتصال» بدون ذخیره → toast «کلید کنسول معتبر نیست» · حالت password → toast خطای اعتبارنامه · ذخیره → «تنظیمات پیامک ذخیره شد ✅» · VLM رندر تب پیامک و راهنماها را تأیید کرد (بدون به‌هم‌ریختگی)
   - lint صفر · dev.log بدون خطا · /api/health db:up · صفحهٔ اصلی 200
-- نکتهٔ تست: جدول AdminUser دیتابیس D1 لوکال سندباکس خالی بود (ریست سندباکس) → ادمین nakhl-admin با رمز تست Nakhl@2025! از طریق wrangler d1 درج شد؛ تنظیمات پیامک تست بعد از اتمام به provider=none/devMode برگردانده شد
+- نکتهٔ تست: جدول AdminUser دیتابیس D1 لوکال سندباکس خالی بود (ریست سندباکس) → ادمین nakhl-admin با رمز تست [REDACTED — سندباکس محلی، خارج از ریپو] از طریق wrangler d1 درج شد؛ تنظیمات پیامک تست بعد از اتمام به provider=none/devMode برگردانده شد
 
 Stage Summary:
 - ✅ ریشهٔ «خطای اتصال پنل مدیریت» رفع شد (route گمشده + یکپارچگی کامل با API جدید کنسول ملی‌پیامک)
@@ -1240,3 +1240,27 @@ Stage Summary:
 - ✅ همهٔ خطاهای ملی‌پیامک (کلید نامعتبر، From ناقص، اعتبارنامه اشتباه، تایم‌اوت) با پیام فارسی واضح به کاربر می‌رسند — در تست اتصال و در ارسال OTP
 - ⚠️ برای پروداکشن: کلید واقعی را از console.melipayamak.com ← «کلیدها» بسازید، From (خط اختصاصی) را پر کنید، تست اتصال بزنید تا «اعتبار پنل» را ببینید، بعد ذخیره و Dev Mode را خاموش کنید
 - بک‌لاگ: Web Push، نظرات عمومی، ریسپانسیو ادمین، گسترش CMS
+
+---
+Task ID: sms-2
+Agent: Z.ai Code (main)
+Task: اصلاح نهایی برای دیپلوی — رفع کارنکردن «تست اتصال پیامک» (فایل در Git/خروجی نهایی نبود)، بازگردانی/تأیید تنظیمات دامنه/SSL/DirectAdmin، بررسی .gitignore، پیاده‌سازی ارسال OTP با «پترن خدماتی» ملی‌پیامک طبق مستندات رسمی (کد پترن در پنل مدیریت)، تست عملی Docker/بیلد/سلامت — بدون تغییر ظاهر و بدون ورود اطلاعات حساس به ریپو (درخواست کاربر)
+
+Work Log:
+- **ریشهٔ اصلی «کارنکردن دکمهٔ تست اتصال» پیدا شد:** الگوی خالیِ `test` در .gitignore کل مسیر src/app/api/admin/sms/ را نادیده می‌گرفت → route.ts تست اتصال (ساخت فاز sms-1) هرگز کامیت نشده بود و در ریپو/خروجی نهایی وجود نداشت → روی استقرار واقعی 404. اصلاح: الگوهای خطرناک ریشه‌ای شدند (`/test`، `/prompt`، `/local-*`) + کامنت فارسی هشدار؛ git check-ignore تأیید کرد مسیر دیگر ignore نیست و فایل stage شد
+- **بررسی مستندات رسمی پترن ملی‌پیامک (web-search + page-reader + سورس کتابخانهٔ رسمی node-melipayamak + curl زنده):** کنسول جدید: POST console.melipayamak.com/api/send/shared/{token} با body {to, bodyId, args[]} (تأیید زنده: body خالی → ProblemDetails «missing 'to'»، کلید جعلی → «کلید کنسول معتبر نیست»)؛ پنل قدیمی: POST rest.payamak-panel.com/api/SendSMS/BaseServiceNumber (form-urlencoded: username/password/to/bodyId/text=متغیرها با ;) با ReturnValue = recId بلند ⇒ موفق (کدهای خطا از مستندات SendByBaseNumber2 ترجمه شد)
+- **پیاده‌سازی پترن در src/lib/sms/index.ts:** validatePatternCode (عدد مثبت) · sendMelipayamakConsolePattern (send/shared) · sendMelipayamakLegacyPattern (BaseServiceNumber + نگاشت ۲۰+ کد خطا به فارسی مثل -4 «کد پترن تأیید نشده» و -5 «متغیرها همخوانی ندارد») · دیسپچر sendOtpSms: اگر melipayamakPatternCode پر باشد → ارسال OTP از خط خدماتی با args=[code] (پترن باید یک متغیر %0 داشته باشد)؛ وگرنه ارسال سادهٔ قبلی · پیام موفقیت تست اتصال حالا حالت (پترن/ساده) را گزارش می‌کند
+- **Settings/API/UI:** SMSSettings + DEFAULT + zod اسکیمای admin/settings + TESTABLE_KEYS مسیر sms/test همگی melipayamakPatternCode گرفتند؛ AdminSettings.tsx فیلد «کد پترن خدماتی» (کادر سبز، فقط عدد، راهنمای کامل ساخت پترن در پنل ملی‌پیامک) زیر فیلد From — بدون تغییر ظاهر سایر بخش‌ها
+- **DirectAdmin/SSL/دامنه:** docker/directadmin/nakhl-proxy.conf بررسی و تأیید شد = همان نسخهٔ صحیح v2 فاز docker-2 (RewriteCond برای WS + مستثنی‌کردن acme-challenge برای تمدید LE + retry=0 + X-Forwarded-Proto برای callback https) — در Git هم هست
+- **امنیت ریپو:**.env ها ignore و خارج از باندل داکر (تأیید .dockerignore)؛ اسکن git grep بدون کلید/رمز واقعی (فقط placeholder kp_…)؛ رمز تست سندباکس از worklog پاک ([REDACTED])؛ تست‌ها فقط با کلید جعلی FAKEKEY123
+- **تست‌های عملی:** typecheck صفر · lint صفر · dev: تست اتصال با کلید جعلی → «کلید کنسول معتبر نیست» (خطای واقعی سرور ملی‌پیامک) · تست تفاضلی اثبات مسیر پترن: پترن+From خالی → خطای کلید (نه خطای From)؛ بدون پترن+From خالی → خطای From؛ کد پترن غیرعددی → خطای فارسی اعتبارسنجی · agent-browser: ورود پنل → تب پیامک → فیلد پترن با مقدار 254 (VLM: چیدمان سالم، راهنما کامل) → دکمهٔ تست اتصال → toast «کلید کنسول معتبر نیست»
+- **شبیه‌سازی کامل Docker (daemon در سندباکس نیست — مثل docker-1/2 با همان مراحل Dockerfile):** NAKHL_DOCKER_BUILD=1 بیلد standalone ✓ (مسیر /api/admin/sms/test در فهرست route ها و در .next/standalone موجود) → بازسازی layout ایمیج (standalone + static + public + app-server + runtime-deps جدا مثل Dockerfile — نکتهٔ یادگرفته: bun add داخل دایرکتوری sim نسخهٔ next را 16.1.3→16.3.5 بالا می‌برد و manifest می‌شکند؛ merge جدا مثل Dockerfile این را غیرممکن می‌کند) → migrate + seed (ادمین از ADMIN_PASSWORD) → بوت node app-server.js:8080 ✓ → health db:up ✓ → / و /nk-admin 200 ✓ → **مسیر /api/admin/sms/test موجود (401 بدون سشن، نه 404!)** ✓ → ورود ادمین ✓ → ذخیرهٔ کلید جعلی+پترن 254 ✓ → تست اتصال از داخل runtime پروداکشن → «کلید کنسول معتبر نیست» ✓ → OTP با مسیر پترن → همان خطا منتقل شد ✓ → WS polling handshake ✓ → گارد /emit با کلید غلط 401 ✓ → خاموشی تمیز و پاک‌سازی sim
+- استک dev سندباکس دوباره بالا آمد (next dev :3000 با D1/Miniflare + notify-service :3003) — health db:up و صفحهٔ اصلی 200
+
+Stage Summary:
+- ✅ «تست اتصال پیامک» هم در Git است هم در خروجی نهایی standalone (داکر) — روی استقرار واقعی دیگر 404 نمی‌شود
+- ✅ ارسال کد یکبارمصرف با «پترن خدماتی» ملی‌پیامک طبق مستندات رسمی: پترن در پنل ملی‌پیامک ساخته می‌شود و «کد پترن» در پنل مدیریت سایت (تنظیمات→پیامک) وارد می‌شود؛ هر دو نسل API (کنسول جدید + پنل قدیمی) با ترجمهٔ کامل خطاها
+- ✅ تنظیمات دامنه/SSL/DirectAdmin نسخهٔ صحیح v2 است و در Git؛ .gitignore اصلاح شد و فایل ضروری دیگری ignore نیست (git status --ignored بررسی شد)
+- ✅ بدون تغییر ظاهر/امکانات؛ بدون هیچ اطلاعات حساس در ریپو؛ داکرایز و دو-رانتایمی بودن پروژه دست‌نخورده
+- ⚠️ داکر daemon در سندباکس موجود نیست → «تست Docker» با اجرای همان مراحل Dockerfile (بیلد standalone واقعی + بوت واقعی app-server + E2E) انجام شد؛ اجرای docker compose روی VPS کاربر نهایی است
+- بک‌لاگ: Web Push، نظرات عمومی، ریسپانسیو ادمین، گسترش CMS به CartView/TrackView

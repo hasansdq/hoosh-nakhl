@@ -461,6 +461,7 @@ interface SmsSettings {
   melipayamakUsername: string;
   melipayamakPassword: string;
   melipayamakFrom: string;
+  melipayamakPatternCode: string;
   smsirApiKey: string;
   smsirFrom: string;
   smsirTemplateId: string;
@@ -637,7 +638,25 @@ function SmsSettingsTab() {
                 <Label>شماره فرستنده (From)</Label>
                 <Input dir="ltr" value={settings.melipayamakFrom} onChange={(e) => setSettings({ ...settings, melipayamakFrom: e.target.value })} className="rounded-xl" placeholder="5000... یا 3000..." />
                 <p className="text-[11px] leading-5 text-muted-foreground">
-                  شماره خط اختصاصی پنل (الزامی) — بدون آن ارسال با کلید API انجام نمی‌شود.
+                  شماره خط اختصاصی پنل (الزامی برای ارسال ساده) — بدون آن ارسال با کلید API انجام نمی‌شود.
+                </p>
+              </div>
+              <div className="space-y-1.5 rounded-xl border border-emerald-600/25 bg-emerald-500/5 p-3">
+                <Label>کد پترن خدماتی — ارسال کد یکبارمصرف (اختیاری)</Label>
+                <Input
+                  dir="ltr"
+                  inputMode="numeric"
+                  value={settings.melipayamakPatternCode}
+                  onChange={(e) => setSettings({ ...settings, melipayamakPatternCode: e.target.value.replace(/\D/g, "") })}
+                  className="rounded-xl"
+                  placeholder="مثال: 254"
+                />
+                <p className="text-[11px] leading-5 text-muted-foreground">
+                  روش توصیه‌شدهٔ ملی‌پیامک برای پیامک یکبارمصرف: ابتدا در پنل ملی‌پیامک (بخش «پترن / متون پیش‌فرض»)
+                  پترنی با <b>دقیقاً یک متغیر</b> بسازید (مثال: <span dir="ltr">کد تأیید شما: %0</span>) و پس از تأیید،
+                  «کد پترن» را اینجا وارد کنید. ارسال از <b>خط خدماتی اشتراکی</b> انجام می‌شود و حتی به شماره‌های
+                  لیست‌سیاه مخابرات هم تحویل می‌گردد. اگر خالی بماند، ارسال ساده از خط اختصاصی انجام می‌شود و
+                  «متن پیامک کد تأیید» بالا استفاده خواهد شد (در حالت پترن، متن از خود پنل ملی‌پیامک خوانده می‌شود).
                 </p>
               </div>
             </div>

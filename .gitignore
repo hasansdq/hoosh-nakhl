@@ -41,14 +41,17 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
-local-*
+# NOTE: این الگوها عمداً به ریشه (leading /) محدود شده‌اند تا هرگز فایل‌های
+# سورس داخل src/ را نادیده نگیرند (باگ: الگوی خالیِ «test» مسیر
+# src/app/api/admin/sms/test/ را از Git حذف می‌کرد).
+/local-*
 .claude
 .z-ai-config
 *.log
 dev.log
 dev.out.log
-test
-prompt
+/test
+/prompt
 
 server.log
 # Skills directory
