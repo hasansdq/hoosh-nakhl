@@ -1208,3 +1208,35 @@ Stage Summary:
 - ⚠️ برای دیپلوی واقعی VPS: فقط cp docker/env.example .env → bash docker/deploy.sh → قالب v2 پراکسی در Custom HTTPD دایرکت‌ادمین (نکته‌های v2 در DOCKER-DEPLOY-FA.md بخش ۶)
 - ⚠️ ادمین سندباکس dev همچنان rayantech با رمز قدیمی است (D1 محلی، خارج از ریپو — توصیه: تغییر از پنل)
 - بک‌لاگ: Web Push، نظرات عمومی، ریسپانسیو ادمین، گسترش CMS
+
+---
+Task ID: sms-1
+Agent: Z.ai Code (main)
+Task: اصلاح سیستم اتصال به پنل پیامکی ملی‌پیامک در مدیریت (خطای تست اتصال) — طبق مستندات جدید کنسول ملی‌پیامک
+
+Work Log:
+- **ریشهٔ خطا پیدا شد:** دکمهٔ «تست اتصال» تب پیامک پنل مدیریت به POST /api/admin/sms/test درخواست می‌زد ولی این route اصلاً وجود نداشت → همیشه خطای تست. route از صفر ساخته شد.
+- **بررسی مستندات جدید ملی‌پیامک (وب‌سرچ + خواندن صفحات رسمی melipayamak.com/api و بلاگ کنسول + تحلیل کتابخانهٔ رسمی node-melipayamak + تست زندهٔ endpoint ها با curl):**
+  - کنسول جدید (Token/API-Key): POST https://console.melipayamak.com/api/send/simple/{token} با body الزامی {from,to,text} → پاسخ {recId,status}؛ خطای کلید: HTTP 400 {"status":"کلید کنسول معتبر نیست"}؛ خطای اعتبارسنجی: فرمت ProblemDetails با errors
+  - GET https://console.melipayamak.com/api/receive/credit/{token} → {amount,status} — برای «تست اتصال بدون ارسال پیامک و بدون کسر هزینه»
+  - پنل قدیمی: POST rest.payamak-panel.com/api/SendSMS/SendSMS (RetStatus===1 ⇒ موفق) و .../GetCredit → {Value,RetStatus,StrRetStatus} (RetStatus=0/StrRetStatus=UserNameAndPasswordFailed ⇒ خطای اعتبارنامه)
+- **بازنویسی کامل ماژول src/lib/sms/index.ts (بخش ملی‌پیامک):**
+  - send/simple جدید: trim کلید، from الزامی با خطای فارسی واضح (قبلاً from خالی → خطای انگلیسی نامفهوم ASP.NET)، تشخیص موفقیت recId>0 بدون status خطا (چک body.code حذف شد — در API جدید وجود ندارد)، ترجمهٔ خطاهای ProblemDetails به فارسی، تشخیص تایم‌اوت با پیام راهنما
+  - Legacy: SendSMS با RetStatus===1 + From الزامی؛ GetCredit برای تست
+  - testSmsProvider: **بدون ارسال پیامک** — apikey → receive/credit (کلید + اعتبار برمی‌گرداند)، password → GetCredit (ترجمهٔ UserNameAndPasswordFailed به «نام کاربری یا رمز عبور ملی‌پیامک اشتباه است»)؛ SMS.IR → پیام ذخیره‌شدن کلید
+  - SmsResult با message/credit جدید؛ dev fallback و dispatcher بدون تغییر
+- **route جدید src/app/api/admin/sms/test/route.ts:** requireAdmin + ادغام مقادیر فرم فعلی (بدون ذخیره) روی تنظیمات ذخیره‌شده — مقادیر ماسک‌شده (•) نادیده گرفته می‌شوند تا secret ها لو نروند؛ هشدار فارسی برای مقادیر خالی؛ AuditLog SMS_TEST (موفق/خطا/ارائه‌دهنده)؛ provider=none → پیام راهنما
+- **AdminSettings.tsx (فقط متن/رفتار، بدون تغییر ظاهر):** دکمهٔ تست حالا values فرم را POST می‌کند (تست قبل از ذخیره ممکن شد)؛ toast موفقity → toast.success؛ راهنمای ساخت کلید کنسول (console.melipayamak.com ← بخش «کلیدها») زیر فیلد کلید API و راهنمای «From الزامی» زیر شماره فرستنده
+- **تست‌های عملی (همه سبز):**
+  - curl: apikey+کلید جعلی → «کلید کنسول معتبر نیست» (خطای واقعی از سرور ملی‌پیامک) · password+اعتبارنامه جعلی → «نام کاربری یا رمز عبور ملی‌پیامک اشتباه است» · provider=none → پیام راهنما · بدون سشن → 401
+  - OTP: بدون From → خطای فارسی الزامی بودن From · با From+کلید جعلی → خطای ملی‌پیامک به کاربر منتقل می‌شود؛ devMode → devCode در سندباکس
+  - agent-browser (UI): ورود پنل → تنظیمات → تب پیامک → انتخاب ملی‌پیامک → کلید/From جعلی → «تست اتصال» بدون ذخیره → toast «کلید کنسول معتبر نیست» · حالت password → toast خطای اعتبارنامه · ذخیره → «تنظیمات پیامک ذخیره شد ✅» · VLM رندر تب پیامک و راهنماها را تأیید کرد (بدون به‌هم‌ریختگی)
+  - lint صفر · dev.log بدون خطا · /api/health db:up · صفحهٔ اصلی 200
+- نکتهٔ تست: جدول AdminUser دیتابیس D1 لوکال سندباکس خالی بود (ریست سندباکس) → ادمین nakhl-admin با رمز تست Nakhl@2025! از طریق wrangler d1 درج شد؛ تنظیمات پیامک تست بعد از اتمام به provider=none/devMode برگردانده شد
+
+Stage Summary:
+- ✅ ریشهٔ «خطای اتصال پنل مدیریت» رفع شد (route گمشده + یکپارچگی کامل با API جدید کنسول ملی‌پیامک)
+- ✅ «تست اتصال» حالا واقعی است: کلید را از فرم (حتی ذخیره‌نشده) می‌آزماید، بدون ارسال پیامک/هزینه، و با کلید معتبر «اعتبار پنل» را نمایش می‌دهد
+- ✅ همهٔ خطاهای ملی‌پیامک (کلید نامعتبر، From ناقص، اعتبارنامه اشتباه، تایم‌اوت) با پیام فارسی واضح به کاربر می‌رسند — در تست اتصال و در ارسال OTP
+- ⚠️ برای پروداکشن: کلید واقعی را از console.melipayamak.com ← «کلیدها» بسازید، From (خط اختصاصی) را پر کنید، تست اتصال بزنید تا «اعتبار پنل» را ببینید، بعد ذخیره و Dev Mode را خاموش کنید
+- بک‌لاگ: Web Push، نظرات عمومی، ریسپانسیو ادمین، گسترش CMS
