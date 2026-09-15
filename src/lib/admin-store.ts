@@ -19,6 +19,7 @@ export type AdminTab =
   | "coupons"
   | "reviews"
   | "settings"
+  | "tools"
   | "uploads"
   | "audit";
 

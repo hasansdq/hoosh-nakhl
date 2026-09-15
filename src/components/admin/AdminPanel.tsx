@@ -18,6 +18,7 @@ import { CouponsManager } from "./CouponsManager";
 import { ReviewsManager } from "./ReviewsManager";
 import { AdminSettings } from "./AdminSettings";
 import { ContentManager } from "./ContentManager";
+import { ToolsManager } from "./ToolsManager";
 import { UploadsManager, AuditLogView } from "./UploadsAudit";
 import { AdminSearchPalette, type AdminSearchSelection } from "./AdminSearchPalette";
 import { ThemeToggle } from "@/components/ThemeToggle";
@@ -33,6 +34,7 @@ import {
   Star,
   Wand2,
   Settings,
+  Wrench,
   UploadCloud,
   ScrollText,
   Loader2,
@@ -54,6 +56,7 @@ const TABS: { key: AdminTab; label: string }[] = [
   { key: "coupons", label: "کدهای تخفیف" },
   { key: "reviews", label: "نظرات" },
   { key: "settings", label: "تنظیمات" },
+  { key: "tools", label: "ابزارها" },
   { key: "uploads", label: "فایل‌ها" },
   { key: "audit", label: "گزارش‌ها" },
 ];
@@ -68,6 +71,7 @@ const TAB_ICONS: Record<AdminTab, React.ElementType> = {
   coupons: Ticket,
   reviews: Star,
   settings: Settings,
+  tools: Wrench,
   uploads: UploadCloud,
   audit: ScrollText,
 };
@@ -501,6 +505,7 @@ export function AdminPanel() {
           {tab === "coupons" && <CouponsManager />}
           {tab === "reviews" && <ReviewsManager />}
           {tab === "settings" && <AdminSettings />}
+          {tab === "tools" && <ToolsManager />}
           {tab === "uploads" && <UploadsManager />}
           {tab === "audit" && <AuditLogView />}
         </main>
