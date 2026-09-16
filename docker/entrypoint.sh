@@ -27,14 +27,20 @@ mkdir -p "${DATA_DIR}" "${DATA_DIR}/uploads" "${DATA_DIR}/backups"
 
 # ---------- 2. secrets bootstrap ---------------------------------------------
 # set_secret <NAME> <VALUE> — upsert one NAME=VALUE line in the secrets file.
+# SECURITY: the value is written with printf (never interpreted), and the
+# update is done by filtering the file line-by-line — no sed with the raw
+# value interpolated into a regex (an operator key containing `|`, `&`, `\`
+# or newlines could not corrupt or inject into the secrets file).
+# The write is atomic (temp file + mv) so a crash mid-update can never leave
+# a half-written secrets.env behind.
 set_secret() {
   name="$1"; value="$2"
   touch "${SECRETS_FILE}"; chmod 600 "${SECRETS_FILE}"
-  if grep -q "^${name}=" "${SECRETS_FILE}" 2>/dev/null; then
-    sed -i "s|^${name}=.*|${name}=${value}|" "${SECRETS_FILE}"
-  else
-    echo "${name}=${value}" >> "${SECRETS_FILE}"
-  fi
+  tmp="${SECRETS_FILE}.tmp"
+  grep -v "^${name}=" "${SECRETS_FILE}" 2>/dev/null > "${tmp}" || true
+  printf '%s=%s\n' "${name}" "${value}" >> "${tmp}"
+  chmod 600 "${tmp}"
+  mv "${tmp}" "${SECRETS_FILE}"
 }
 
 random_hex() {
@@ -52,8 +58,12 @@ if [ -n "${ADMIN_NOTIFY_KEY:-}" ]; then
   log "ADMIN_NOTIFY_KEY taken from environment (persisted to data/secrets.env)"
 elif [ -f "${SECRETS_FILE}" ] && grep -q "^ADMIN_NOTIFY_KEY=" "${SECRETS_FILE}"; then
   # reuse the key generated on an earlier boot — sessions/staff panels keep
-  # receiving realtime events across redeploys
-  . "${SECRETS_FILE}"
+  # receiving realtime events across redeploys.
+  # SECURITY: read the value WITHOUT sourcing the file as shell code — an
+  # operator-provided key may contain shell metacharacters (| & \ ` $ ; …)
+  # that would break (or worse, execute) during `. file`, aborting the boot.
+  # grep+cut extracts everything after the first «=» verbatim.
+  ADMIN_NOTIFY_KEY="$(grep '^ADMIN_NOTIFY_KEY=' "${SECRETS_FILE}" | head -n 1 | cut -d= -f2-)"
   [ -n "${ADMIN_NOTIFY_KEY:-}" ] && export ADMIN_NOTIFY_KEY
   log "ADMIN_NOTIFY_KEY restored from data/secrets.env (unchanged since first boot)"
 else

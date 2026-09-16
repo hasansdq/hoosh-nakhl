@@ -50,6 +50,12 @@
 
 - VPS با دسترسی root (Debian/Ubuntu/CentOS — فرقی ندارد) که **دایرکت‌ادمین** روی آن نصب و فعال است.
 - حداقل منابع: ۱GB RAM + ۲GB دیسک آزاد (اپ سبک است؛ SQLite + Next.js standalone).
+  > نکتهٔ بیلد: مرحلهٔ `docker compose build` (کامپایل Next) به‌طور موقت بیش از اجرای اپ حافظه می‌خواهد؛
+  > روی VPS با ۱–۲GB RAM یک‌بار **swap** فعال کنید تا بیلد با OOM قطع نشود (برای اجرا لازم نیست):
+  > ```bash
+  > fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile
+  > # (بعد از اولین بیلد موفق می‌توانید swapon را در /etc/fstab نگه دارید یا بردارید)
+  > ```
 - دسترسی به پنل دایرکت‌ادمین (سطح Admin برای Custom HTTPD) یا SSH با دسترسی ویرایش فایل‌های DA.
 - یک دامنه یا ساب‌دامنه (مثلاً `order.example.ir`) که به IP سرور اشاره می‌کند.
 

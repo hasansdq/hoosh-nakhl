@@ -1305,3 +1305,34 @@ Stage Summary:
 - ✅ اعتبارسنجی و پیش‌نمایش قبل از اجرا (همان موتور سرور در کلاینت) + گزارش سطری کامل + audit log
 - ⚠️ برای Files بزرگ (>چند صد ردیف) روی Cloudflare Workers ممکن است محدودیت زمان اجرا درگیر شود — استقرار اصلی کاربر Docker/VPS است که مشکلی ندارد (حداکثر ۵۰۰۰ ردیف)
 - بک‌لاگ قبلی حفظ شد: Web Push، نظرات عمومی، ریسپانسیو ادمین، گسترش CMS؛ پیشنهاد آینده: درون‌ریزی/برون‌بری دسته‌بندی‌ها و نظرات
+
+---
+Task ID: docker-audit-1
+Agent: Z.ai Code (main)
+Task: بررسی کامل و دقیق داکرایز پروژه برای استقرار امن روی VPS با داکر — با اصول امنیتی کامل و حفظ دیتابیس (درخواست کاربر)
+
+Work Log:
+- **ممیزی جامع فایل‌های داکر:** Dockerfile (multi-stage، non-root، healthcheck، حذف .env از standalone) · docker-compose.yml (loopback-only publish، cap_drop ALL، no-new-privileges، log rotation، stop_grace_period) · entrypoint.sh · app-server.js · migrate/seed/backup/restore.mjs · deploy/update/backup/restore.sh · env.example · nakhl-proxy.conf (نسخهٔ اصلاح‌شدهٔ apache-fix-1) · DOCKER-DEPLOY-FA.md — همهٔ مسیرها و رفتارها با مستندات سازگار بود
+- **انطباق اسکیما–مهاجرت:** ۲۰ مدل Prisma = ۲۰ جدول SQL migrations (تطبیق ستون‌به‌ستون MenuItem هم ✓) — دیتابیس داکر فقط از migrations ساخته می‌شود و هیچ drift ندارد
+- **امنیت ریپو:** اسکن کلید/رمز واقعی در git grep → صفر · .gitignore ریشه‌ای و ایمن · .dockerignore همهٔ .env ها را از ایمیج حذف می‌کند · seedها بدون credential
+- **تثبیت درخت Git:** تغییرات mode کامیت‌نشدهٔ ۵ فایل CSV (644→755) کامیت شد (9c19e27) — درخت برای استقرار تمیز شد
+- **دو ریسک واقعی در entrypoint.sh پیدا و ریشه‌ای رفع شد:**
+  1. set_secret با sed مقدار خام کلید را در regex تزریق می‌کرد — کلید اپراتور حاوی | & \ می‌توانست secrets.env را خراب/تزریق کند → بازنویسی با grep+printf+ نوشتن اتمیک (tmp+mv، chmod 600)
+  2. **باگ بلاک‌کنندهٔ ری‌دیپلوی:** خواندن secrets.env با `. file` (سورس شل) — کلید اپراتور با هر متاکاراکتری (| & \ ` $ ; …) بوت بعدی را با `set -eu` کلاً متوقف می‌کرد (در تست واقعی رخ داد: «key: not found» و کانتینر بالا نیامد!) → خواندن با grep^ anchored + cut -d= -f2- بدون تفسیر شل
+- **نکتهٔ دیپلوی:** راهنمای DOCKER-DEPLOY-FA.md یادداشت swap برای بیلد روی VPS کم‌رم (۱–۲GB) گرفت
+- **شبیه‌سازی کامل Docker از HEAD فعلی (داکتر daemon در سندباکس نیست — همان روش اثبات‌شدهٔ فازهای قبل):** بیلد واقعی standalone (NAKHL_DOCKER_BUILD=1 — همهٔ مسیرها از جمله tools/products/* و sms/test در routes-manifest) → چیدمان دقیق ایمیج طبق Dockerfile (prune دایرکتوری‌های سندباکس + حذف .env + static/public/scripts/migrations/seed) → runtime-deps پین‌شده جدا و merge (next روی 16.1.3 ماند) → بوت واقعی entrypoint
+- **تکنیک سندباکس کشف‌شده:** هارنس، پروسه‌های پس‌زمینه را با پایان هر tool-call می‌کشد (setsid ساده کافی نیست — قربانی اولین بوت سیم شد) → double-fork (پوستهٔ میانی فوری exit → reparent به init) پایدار است؛ سوپروایزر notify-service هم هر ۳۰ ثانیه next dev را self-heal می‌کند
+- **E2E پروداکشن (پوسچر ZARINPAL_FORCE_REAL=1، NAKHL_SEED_PROFILE=prod) — همهٔ سبز:** health db:up · / و /nk-admin و 200 + هدرهای امنیتی (nosniff/XFO/Referrer-Policy) · منو ۷ دسته/۳۰ آیتم · ورود ادمین (رمز غلط 401، درست 200+کوکی) · 401 بدون سشن · **کیل‌سوییچ پرداخت: simulate → 403** · /emit بدون کلید 401، با کلید persisted 200 · handshake/polling → 200 · **OTP بدون لو رفتن devCode در پروداکشن**
+- **CSV رفت‌وبرگشت در بیلد پروداکشن داکر (اولین بار):** export 200/BOM/۱۵ ستون/۳۰ ردیف/بدون هیچ ستون تصویر · template 200 با دسته‌های واقعی · import multipart: ۳۰ به‌روزرسانی + قیمت «۱۸٬۵۰۰» فارسی → 18500 ✓ + ۱ ایجاد با دستهٔ خودکار جدید · **۳۰/۳۰ تصاویر (imageUrl+gallery) و orderCount دست‌نخورده** · ردیف جابه‌جا (کمبود ستون شناسه) با پیام فارسی فیلد-به‌فیلد رد شد — اعتبارسنجی دقیق
+- **بک‌اپ/فاجعه/بازیابی:** snapshot آنلاین VACUUM INTO (۰.۳MB) · خاموشی graceful (SIGTERM → لاگ تمیز → exit) · حذف کامل DB → restore (صحت‌سنجی AdminUser/MenuItem + WAL) · بوت سوم: مهاجرت no-op، سید بدون تکرار (هنوز ۳۱ آیتم)، ورود ادمین 200، همان کلید notify کار کرد
+- **۵ بوت متوالی روی همان volume:** اولین بوت (تولید کلید) → بوت دوم (بازیابی کلید + حفظ ادمین) → بعد از فاجعه → کلید پیچیدهٔ اپراتور (پس از fix هر دو مسیر env و restore) — همهٔ داده‌ها حفظ شدند
+- **راستی‌آزمایی مرورگر روی سرور پروداکشن سیم:** صفحهٔ اصلی RTL کامل، ۲۱۶ عنصر تعاملی، منو با تصاویر لود شد، **صفر خطای کنسول**
+- رگرسیون: lint صفر · tsc صفر · استک dev سندباکس سالم (health db:up روی 3000)
+
+Stage Summary:
+- ✅ پروژه دقیقاً قابل استقرار روی VPS با داکر است: مسیر استقرار = cp docker/env.example .env → bash docker/deploy.sh → قالب v2+اصلاح‌apache پراکسی در Custom HTTPD دایرکت‌ادمین
+- ✅ امنیت کامل تأیید شد: non-root + cap_drop ALL + no-new-privileges + loopback-only + رازها فقط در volume (600) + کیل‌سوییچ پرداخت سه‌لایه فعال + fail-closed کلید notify + بدون credential در ریپو/ایمیج
+- ✅ حفظ دیتابیس اثبات‌شده با ۵ بوت/ری‌دیپلوی/فاجعه-بازیابی روی همان volume + بک‌اپ VACUUM INTO سازگار
+- ⚠️ دو باگ واقعی entrypoint (تزریق sed + شکستن بوت با متاکاراکترهای کلید) رفع شد — بدون این اصلاح، کلید اپراتوری با کاراکتر خاص ری‌دیپلوی را می‌شکست
+- ⚠️ داکر daemon در سندباکس نیست → تأیید با شبیه‌سازی کامل مراحل Dockerfile (بیلد/چیدمان/بوت واقعی/E2E)؛ اجرای docker compose روی VPS کاربر نهایی است
+- بک‌لاگ قبلی حفظ شد: Web Push، نظرات عمومی، ریسپانسیو ادمین، گسترش CMS
