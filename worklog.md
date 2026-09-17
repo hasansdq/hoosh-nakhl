@@ -1336,3 +1336,18 @@ Stage Summary:
 - ⚠️ دو باگ واقعی entrypoint (تزریق sed + شکستن بوت با متاکاراکترهای کلید) رفع شد — بدون این اصلاح، کلید اپراتوری با کاراکتر خاص ری‌دیپلوی را می‌شکست
 - ⚠️ داکر daemon در سندباکس نیست → تأیید با شبیه‌سازی کامل مراحل Dockerfile (بیلد/چیدمان/بوت واقعی/E2E)؛ اجرای docker compose روی VPS کاربر نهایی است
 - بک‌لاگ قبلی حفظ شد: Web Push، نظرات عمومی، ریسپانسیو ادمین، گسترش CMS
+
+---
+Task ID: sandbox-admin-reseed
+Agent: Z.ai Code (main)
+Task: پاسخ به استعلام کاربر دربارهٔ دسترسی پنل ادمین سندباکس — جدول AdminUser بعد از ریست سندباکس خالی بود؛ بازسازی و راستی‌آزمایی ورود
+
+Work Log:
+- بررسی bootstrap scripts → سندباکس: D1 لوکال (binding DB) + scripts/bootstrap-admin-d1.ts (idempotent، از env، رمز هرگز در ریپو نیست)
+- SELECT AdminUser در D1 لوکال → خالی (ریست سندباکس؛ بار دوم که رخ می‌دهد) → اجرای ADMIN_USERNAME=nakhl-admin ADMIN_PASSWORD=… bun run db:admin:local → «ادمین ساخته شد»
+- راستی‌آزمایی واقعی: /api/health db:up · /nk-admin 200 · login رمز غلط → 401 · login رمز درست → 200 + کوکی سشن + JSON مدیر ✓
+
+Stage Summary:
+- دسترسی پنل ادمین سندباکس: آدرس /nk-admin، کاربر nakhl-admin، رمز تست فقط در چت به کاربر اعلام شد (خارج از ریپو/worklog — الگوی REDACTED حفظ شد)
+- ادمین پروداکشن VPS مستقل است: از ADMIN_* در .env یا data/initial-admin-credentials.txt داخل کانتینر — ربطی به سندباکس ندارد
+- اگر بعد از ریست بعدی سندباکس ورود رد شد: ADMIN_USERNAME=nakhl-admin ADMIN_PASSWORD='…' bun run db:admin:local (فقط وقتی جدول خالی است می‌سازد؛ ادمین موجود را هرگز بازنویسی نمی‌کند)
