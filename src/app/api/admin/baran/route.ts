@@ -9,11 +9,74 @@ import type { BaranSettings } from "@/lib/settings";
 /**
  * مدیریت اتصال باران — /api/admin/baran
  * ---------------------------------------------------------------------------
- * GET  → تنظیمات + آمار همگام‌سازی + لاگ فراخوانی‌ها + اقلام متصل
+ * GET  → تنظیمات + آمار همگام‌سازی + سلامت اتصال واقعی + لاگ + اقلام متصل
  * PUT  → ذخیرهٔ تنظیمات (whitelist دقیق؛ فعال‌سازی بدون کلید → کلید خودکار)
+ *
+ * سلامت اتصال از «فراخوانی‌های واقعی باران» در BaranSyncLog استخراج می‌شود:
+ * آخرین تماس، آخرین موفقیت، آخرین خطا، نرخ موفقیت و حکم نهایی (health).
  */
 
 const SENDABLE = ["PAID", "PREPARING", "READY", "DELIVERING", "DELIVERED"];
+
+/** پنجره‌های زمانی سلامت */
+const H_24 = 24 * 3600 * 1000;
+const D_7 = 7 * 24 * 3600 * 1000;
+
+export interface BaranHealth {
+  /** off=غیرفعال · no_contact=فعال ولی بدون تماس · healthy · stale=فعال ولی قدیمی · failing=خطای اخیر */
+  verdict: "off" | "no_contact" | "healthy" | "stale" | "failing";
+  lastCallAt: string | null;
+  lastSuccessAt: string | null;
+  lastErrorAt: string | null;
+  lastErrorMessage: string | null;
+  lastErrorMethod: string | null;
+  calls24h: number;
+  calls7d: number;
+  okCalls: number;
+  failedCalls: number;
+  successRate: number; // 0..100 — روی پنجرهٔ لاگ اخیر
+}
+
+function computeHealth(
+  settings: { enabled: boolean },
+  logs: { method: string; okCount: number; failCount: number; message: string | null; createdAt: Date }[],
+): BaranHealth {
+  const now = Date.now();
+  const lastCall = logs[0] ?? null;
+  const lastSuccess = logs.find((l) => l.okCount > 0) ?? null;
+  const lastFail = logs.find((l) => l.failCount > 0) ?? null;
+  const okCalls = logs.filter((l) => l.okCount > 0).length;
+  const failedCalls = logs.filter((l) => l.failCount > 0).length;
+  const calls24h = logs.filter((l) => now - l.createdAt.getTime() < H_24).length;
+  const calls7d = logs.filter((l) => now - l.createdAt.getTime() < D_7).length;
+
+  let verdict: BaranHealth["verdict"];
+  if (!settings.enabled) {
+    verdict = "off";
+  } else if (!lastCall) {
+    verdict = "no_contact";
+  } else if (lastFail && (!lastSuccess || lastFail.createdAt > lastSuccess.createdAt)) {
+    verdict = "failing";
+  } else if (lastSuccess && now - lastSuccess.createdAt.getTime() > D_7) {
+    verdict = "stale";
+  } else {
+    verdict = "healthy";
+  }
+
+  return {
+    verdict,
+    lastCallAt: lastCall?.createdAt.toISOString() ?? null,
+    lastSuccessAt: lastSuccess?.createdAt.toISOString() ?? null,
+    lastErrorAt: lastFail?.createdAt.toISOString() ?? null,
+    lastErrorMessage: lastFail?.message ?? null,
+    lastErrorMethod: lastFail?.method ?? null,
+    calls24h,
+    calls7d,
+    okCalls,
+    failedCalls,
+    successRate: logs.length ? Math.round((okCalls / logs.length) * 100) : 0,
+  };
+}
 
 export async function GET() {
   try {
@@ -52,6 +115,7 @@ export async function GET() {
         ordersSent,
         lastProductSyncAt: maxSync._max.baranSyncedAt?.toISOString() ?? null,
       },
+      health: computeHealth(settings, logs),
       logs: logs.map((l) => ({
         id: l.id,
         method: l.method,

@@ -14,12 +14,14 @@ import {
  *
  * Method names are matched case-insensitively (ProductSEND / productsend /
  * ProductSend …) so casing differences in the software never break the
- * integration. Only the four methods the restaurant needs are live:
+ * integration. Only the methods the restaurant needs are live:
  *
  *   POST ProductSEND   products  Baran → site
  *   POST SENDPics      pictures  Baran → site
  *   GET  Orders        orders    site → Baran
  *   POST ClearOrders   ack       Baran → site (no-resend)
+ *   GET  Ping          health    non-mutating round-trip (used by the admin
+ *                                connection test; harmless if Baran calls it)
  *
  * CustomersSEND / SendCoupons / GetChargeWallet are intentionally not
  * implemented (out of the agreed scope) — they answer a descriptive 404.
@@ -40,12 +42,21 @@ async function resolveMethod(ctx: Ctx): Promise<string | null> {
 
 const UNKNOWN_METHOD = () =>
   NextResponse.json(
-    { error: "متد ناشناخته — متدهای فعال: Orders (GET)، ProductSEND، SENDPics، ClearOrders (POST)" },
+    { error: "متد ناشناخته — متدهای فعال: Orders و Ping (GET)، ProductSEND، SENDPics، ClearOrders (POST)" },
     { status: 404 },
   );
 
 export async function GET(req: NextRequest, ctx: Ctx) {
   const name = await resolveMethod(ctx);
+  if (name === "ping") {
+    // health round-trip — همان نگهبان متدهای واقعی (503 غیرفعال / 401 کلید)
+    const guard = await baranGuard(req);
+    if (guard) return guard;
+    return NextResponse.json(
+      { ok: true, service: "ApiServiceBaran", method: "Ping", serverTime: new Date().toISOString() },
+      { headers: { "cache-control": "no-store" } },
+    );
+  }
   if (name !== "orders") {
     if (name && ["productsend", "sendpics", "clearorders"].includes(name)) {
       return NextResponse.json({ error: "این متد با درخواست POST فراخوانی می‌شود" }, { status: 405 });

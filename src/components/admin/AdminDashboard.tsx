@@ -4,7 +4,11 @@ import { useState, useEffect } from "react";
 import { api } from "@/lib/client-api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { formatToman, formatJalali, timeAgo } from "@/lib/fa";
+import { toPersianDigits } from "@/lib/fa";
+import { useAdminStore } from "@/lib/admin-store";
 import {
   TrendingUp,
   Users,
@@ -13,6 +17,9 @@ import {
   Bot,
   UtensilsCrossed,
   ArrowUpLeft,
+  Cable,
+  HeartPulse,
+  ArrowLeft,
 } from "lucide-react";
 import {
   ResponsiveContainer,
@@ -133,6 +140,9 @@ export function AdminDashboard() {
           </Card>
         ))}
       </div>
+
+      {/* Baran connection status widget */}
+      <BaranStatusWidget />
 
       {/* revenue chart */}
       <Card className="gap-0 overflow-hidden rounded-2xl p-0">
@@ -263,5 +273,136 @@ export function AdminDashboard() {
         </Card>
       </div>
     </div>
+  );
+}
+
+// ============ ویجت وضعیت اتصال باران (در داشبورد) ============
+
+interface BaranWidgetData {
+  settings: { enabled: boolean };
+  stats: {
+    productsSynced: number;
+    ordersPending: number;
+    lastProductSyncAt: string | null;
+  };
+  health: {
+    verdict: "off" | "no_contact" | "healthy" | "stale" | "failing";
+    lastCallAt: string | null;
+    calls24h: number;
+  };
+}
+
+const WIDGET_META: Record<
+  BaranWidgetData["health"]["verdict"],
+  { label: string; badge: string; dot: string; pulse: boolean }
+> = {
+  healthy: {
+    label: "متصل و سالم",
+    badge: "border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
+    dot: "bg-emerald-500",
+    pulse: true,
+  },
+  no_contact: {
+    label: "در انتظار تماس باران",
+    badge: "border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400",
+    dot: "bg-amber-500",
+    pulse: true,
+  },
+  stale: {
+    label: "فعال اما بی‌خبر",
+    badge: "border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400",
+    dot: "bg-amber-500",
+    pulse: false,
+  },
+  failing: {
+    label: "خطا در آخرین فراخوانی",
+    badge: "border-red-500/40 bg-red-500/10 text-red-600 dark:text-red-400",
+    dot: "bg-red-500",
+    pulse: true,
+  },
+  off: {
+    label: "غیرفعال",
+    badge: "border-muted bg-muted text-muted-foreground",
+    dot: "bg-muted-foreground/50",
+    pulse: false,
+  },
+};
+
+function sinceFa(iso: string | null): string {
+  if (!iso) return "—";
+  const diff = Date.now() - new Date(iso).getTime();
+  const m = Math.floor(diff / 60000);
+  if (m < 1) return "همین حالا";
+  if (m < 60) return `${toPersianDigits(m)} دقیقه پیش`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${toPersianDigits(h)} ساعت پیش`;
+  const d = Math.floor(h / 24);
+  if (d < 30) return `${toPersianDigits(d)} روز پیش`;
+  return formatJalali(iso, true);
+}
+
+function BaranStatusWidget() {
+  const [data, setData] = useState<BaranWidgetData | null>(null);
+  const [failed, setFailed] = useState(false);
+  const setTab = useAdminStore((s) => s.setTab);
+
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      const res = await api<BaranWidgetData>("/api/admin/baran");
+      if (!active) return;
+      if (res.success && res.settings) setData(res as unknown as BaranWidgetData);
+      else setFailed(true);
+    })();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  if (failed) return null; // بی‌سر‌و‌صدا — داشبورد بدون این ویجت هم کامل است
+
+  if (!data) {
+    return <Skeleton className="h-[104px] rounded-2xl" />;
+  }
+
+  const meta = WIDGET_META[data.health?.verdict ?? "off"] ?? WIDGET_META.off;
+  const h = data.health;
+
+  return (
+    <Card className="gap-0 overflow-hidden rounded-2xl border-dashed p-0 transition-shadow hover:shadow-lg">
+      <div className="flex flex-wrap items-center gap-3 p-4 sm:gap-4">
+        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-primary/10">
+          <Cable className="h-6 w-6 text-primary" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="flex items-center gap-1.5 text-sm font-bold">
+              <HeartPulse className="h-4 w-4 text-muted-foreground" />
+              اتصال نرم‌افزار باران
+            </span>
+            <Badge variant="outline" className={`gap-1.5 px-2 py-0.5 text-[11px] ${meta.badge}`}>
+              <span className="relative flex h-1.5 w-1.5">
+                {meta.pulse && (
+                  <span
+                    className={`absolute inline-flex h-full w-full animate-ping rounded-full ${meta.dot} opacity-60`}
+                  />
+                )}
+                <span className={`relative inline-flex h-1.5 w-1.5 rounded-full ${meta.dot}`} />
+              </span>
+              {meta.label}
+            </Badge>
+          </div>
+          <p className="mt-1 truncate text-xs text-muted-foreground">
+            {h?.lastCallAt
+              ? `آخرین تماس باران: ${sinceFa(h.lastCallAt)} · ${toPersianDigits(data.stats.productsSynced)} قلم همگام · ${toPersianDigits(data.stats.ordersPending)} سفارش در انتظار ارسال`
+              : "هنوز تماسی از نرم‌افزار باران ثبت نشده — آدرس API و کلید را در باران وارد کنید"}
+          </p>
+        </div>
+        <Button variant="outline" size="sm" className="shrink-0" onClick={() => setTab("baran")}>
+          مدیریت اتصال
+          <ArrowLeft className="mr-1.5 h-3.5 w-3.5" />
+        </Button>
+      </div>
+    </Card>
   );
 }

@@ -3,7 +3,8 @@
 /**
  * اتصال به نرم‌افزار حسابداری باران — پنل مدیریت
  * ---------------------------------------------------------------------------
- * • وضعیت اتصال: فعال/غیرفعال + آمار زندهٔ همگام‌سازی
+ * • وضعیت و سلامت اتصال: حکم زنده (سالم/در انتظار/خطای اخیر/قدیمی) + متریک‌های
+ *   تماس واقعی باران + آخرین خطا + تست سرتاسری اتصال (شبیه‌سازی فراخوانی باران)
  * • راهنمای پیکربندی: آدرس API و کلید (کپی/نمایش/تولید مجدد)
  * • تنظیمات: سطح دسته‌بندی، موجودی، حذف‌شده‌ها، سفارش‌های در انتظار پرداخت
  * • اقلام متصل به باران + گزارش فراخوانی‌های API
@@ -49,7 +50,6 @@ import {
 } from "@/components/ui/alert-dialog";
 import {
   Cable,
-  Power,
   RefreshCw,
   Copy,
   Eye,
@@ -65,9 +65,17 @@ import {
   Loader2,
   RotateCcw,
   AlertTriangle,
-  Info,
   ServerCog,
   ExternalLink,
+  Activity,
+  HeartPulse,
+  Radio,
+  ShieldAlert,
+  CircleCheck,
+  CircleX,
+  TriangleAlert,
+  MinusCircle,
+  Wifi,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -90,6 +98,20 @@ interface BaranStats {
   ordersPending: number;
   ordersSent: number;
   lastProductSyncAt: string | null;
+}
+
+interface BaranHealthDto {
+  verdict: "off" | "no_contact" | "healthy" | "stale" | "failing";
+  lastCallAt: string | null;
+  lastSuccessAt: string | null;
+  lastErrorAt: string | null;
+  lastErrorMessage: string | null;
+  lastErrorMethod: string | null;
+  calls24h: number;
+  calls7d: number;
+  okCalls: number;
+  failedCalls: number;
+  successRate: number;
 }
 
 interface BaranLogRow {
@@ -118,10 +140,67 @@ interface BaranItemRow {
 interface BaranState {
   settings: BaranSettingsDto;
   stats: BaranStats;
+  health: BaranHealthDto;
   logs: BaranLogRow[];
   items: BaranItemRow[];
   apiPath: string;
 }
+
+interface TestStep {
+  key: string;
+  label: string;
+  status: "pass" | "fail" | "warn" | "skip";
+  detail: string;
+  ms: number | null;
+}
+
+interface TestResult {
+  overall: "healthy" | "issues" | "broken";
+  endpointUrl: string | null;
+  steps: TestStep[];
+  testedAt: string;
+}
+
+const HEALTH_META: Record<
+  BaranHealthDto["verdict"],
+  { label: string; hint: string; badge: string; dot: string; pulse: boolean }
+> = {
+  healthy: {
+    label: "متصل و سالم",
+    hint: "باران اخیراً با موفقیت به سایت متصل شده و همگام‌سازی کار می‌کند",
+    badge: "border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
+    dot: "bg-emerald-500",
+    pulse: true,
+  },
+  no_contact: {
+    label: "فعال — در انتظار تماس باران",
+    hint: "اتصال روشن است اما باران هنوز تماسی نگرفته؛ آدرس و کلید را در نرم‌افزار باران وارد کنید",
+    badge: "border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400",
+    dot: "bg-amber-500",
+    pulse: true,
+  },
+  stale: {
+    label: "فعال اما بی‌خبر",
+    hint: "بیش از ۷ روز از آخرین همگام‌سازی موفق گذشته — باران را روشن و در حالت اتصال بررسی کنید",
+    badge: "border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400",
+    dot: "bg-amber-500",
+    pulse: false,
+  },
+  failing: {
+    label: "خطا در آخرین فراخوانی",
+    hint: "آخرین تماس باران با خطا تمام شده — جزئیات زیر و گزارش فراخوانی‌ها را ببینید",
+    badge: "border-red-500/40 bg-red-500/10 text-red-600 dark:text-red-400",
+    dot: "bg-red-500",
+    pulse: true,
+  },
+  off: {
+    label: "غیرفعال",
+    hint: "تا فعال‌نشدن، همهٔ متدهای api/ApiServiceBaran پاسخ خطا می‌دهند",
+    badge: "border-muted bg-muted text-muted-foreground",
+    dot: "bg-muted-foreground/50",
+    pulse: false,
+  },
+};
 
 const METHOD_META: Record<string, { label: string; dir: string; desc: string; className: string }> = {
   ProductSEND: {
@@ -148,6 +227,12 @@ const METHOD_META: Record<string, { label: string; dir: string; desc: string; cl
     desc: "عدم ارسال مجدد",
     className: "bg-sky-500/10 text-sky-600 dark:text-sky-400 border-sky-500/30",
   },
+  Ping: {
+    label: "سلامت اتصال",
+    dir: "rtl",
+    desc: "تست غیرمخرب — GET",
+    className: "bg-violet-500/10 text-violet-600 dark:text-violet-400 border-violet-500/30",
+  },
 };
 
 function fa(n: number | null | undefined): string {
@@ -156,6 +241,20 @@ function fa(n: number | null | undefined): string {
 
 function timeLabel(iso: string | null): string {
   if (!iso) return "—";
+  return formatJalali(iso, true);
+}
+
+/** فاصلهٔ نسبی تا الان — فارسی و کوتاه */
+function sinceLabel(iso: string | null): string {
+  if (!iso) return "—";
+  const diff = Date.now() - new Date(iso).getTime();
+  const m = Math.floor(diff / 60000);
+  if (m < 1) return "همین حالا";
+  if (m < 60) return `${toPersianDigits(m)} دقیقه پیش`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${toPersianDigits(h)} ساعت پیش`;
+  const d = Math.floor(h / 24);
+  if (d < 30) return `${toPersianDigits(d)} روز پیش`;
   return formatJalali(iso, true);
 }
 
@@ -168,12 +267,28 @@ export function BaranManager() {
   const [showKey, setShowKey] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [form, setForm] = useState<BaranSettingsDto | null>(null);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<TestResult | null>(null);
 
   // ---------- بارگذاری ----------
   const applyState = useCallback((res: BaranState) => {
     setState({
       settings: res.settings,
       stats: res.stats,
+      health:
+        res.health ?? {
+          verdict: res.settings.enabled ? "no_contact" : "off",
+          lastCallAt: null,
+          lastSuccessAt: null,
+          lastErrorAt: null,
+          lastErrorMessage: null,
+          lastErrorMethod: null,
+          calls24h: 0,
+          calls7d: 0,
+          okCalls: 0,
+          failedCalls: 0,
+          successRate: 0,
+        },
       logs: res.logs ?? [],
       items: res.items ?? [],
       apiPath: res.apiPath ?? "/api/ApiServiceBaran/",
@@ -318,6 +433,28 @@ export function BaranManager() {
     }
   }, [load]);
 
+  // ---------- تست سرتاسری اتصال (شبیه‌سازی فراخوانی باران) ----------
+  const runTest = useCallback(async () => {
+    setTesting(true);
+    try {
+      const res = await api<Omit<TestResult, "testedAt">>("/api/admin/baran/test", {
+        method: "POST",
+        body: {},
+      });
+      if (res.success && res.steps) {
+        setTestResult({ ...res, testedAt: new Date().toISOString() });
+        const overall = res.overall as TestResult["overall"];
+        if (overall === "healthy") toast.success("تست اتصال موفق — مسیر باران کاملاً سالم است");
+        else if (overall === "issues") toast.info("اتصال کار می‌کند اما نکاتی دارد — جزئیات را ببینید");
+        else toast.error("تست اتصال ناموفق بود — جزئیات را ببینید");
+      } else {
+        toast.error(res.error ?? "خطا در اجرای تست اتصال");
+      }
+    } finally {
+      setTesting(false);
+    }
+  }, []);
+
   // ---------- نمایش ----------
   if (loading || !state || !form) {
     return (
@@ -329,6 +466,8 @@ export function BaranManager() {
 
   const s = state.settings;
   const st = state.stats;
+  const h = state.health;
+  const hm = HEALTH_META[h.verdict] ?? HEALTH_META.off;
 
   const statCards = [
     { label: "اقلام همگام‌شده", value: st.productsSynced, icon: PackageCheck },
@@ -367,24 +506,23 @@ export function BaranManager() {
         </Button>
       </div>
 
-      {/* ---------- وضعیت اتصال ---------- */}
+      {/* ---------- وضعیت و سلامت اتصال ---------- */}
       <Card className="overflow-hidden">
         <CardHeader className="pb-3">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <CardTitle className="flex items-center gap-2 text-base">
-              <Power className="h-4 w-4" />
-              وضعیت اتصال
+              <HeartPulse className="h-4 w-4" />
+              وضعیت و سلامت اتصال
             </CardTitle>
-            <div className="flex items-center gap-3">
-              <Badge
-                variant="outline"
-                className={
-                  s.enabled
-                    ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
-                    : "border-muted bg-muted text-muted-foreground"
-                }
-              >
-                {s.enabled ? "فعال" : "غیرفعال"}
+            <div className="flex flex-wrap items-center gap-3">
+              <Badge variant="outline" className={`gap-1.5 px-2.5 py-1 text-xs ${hm.badge}`}>
+                <span className="relative flex h-2 w-2">
+                  {hm.pulse && (
+                    <span className={`absolute inline-flex h-full w-full animate-ping rounded-full ${hm.dot} opacity-60`} />
+                  )}
+                  <span className={`relative inline-flex h-2 w-2 rounded-full ${hm.dot}`} />
+                </span>
+                {hm.label}
               </Badge>
               <Switch
                 checked={s.enabled}
@@ -394,19 +532,74 @@ export function BaranManager() {
               />
             </div>
           </div>
+          <CardDescription className="pt-1">{hm.hint}</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          {!s.enabled && (
-            <Alert>
-              <Info className="h-4 w-4" />
-              <AlertTitle>اتصال غیرفعال است</AlertTitle>
+          {/* متریک‌های تماس واقعی باران */}
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <div className="flex flex-col gap-1.5 rounded-xl border bg-muted/30 p-3 transition-colors hover:bg-muted/60">
+              <div className="flex items-center gap-1.5 text-muted-foreground">
+                <Radio className="h-3.5 w-3.5" />
+                <span className="text-[11px] leading-4">آخرین تماس باران</span>
+              </div>
+              <span className="text-sm font-bold" title={timeLabel(h.lastCallAt)}>
+                {sinceLabel(h.lastCallAt)}
+              </span>
+            </div>
+            <div className="flex flex-col gap-1.5 rounded-xl border bg-muted/30 p-3 transition-colors hover:bg-muted/60">
+              <div className="flex items-center gap-1.5 text-muted-foreground">
+                <CircleCheck className="h-3.5 w-3.5" />
+                <span className="text-[11px] leading-4">آخرین همگام‌سازی موفق</span>
+              </div>
+              <span className="text-sm font-bold" title={timeLabel(h.lastSuccessAt)}>
+                {sinceLabel(h.lastSuccessAt)}
+              </span>
+            </div>
+            <div className="flex flex-col gap-1.5 rounded-xl border bg-muted/30 p-3 transition-colors hover:bg-muted/60">
+              <div className="flex items-center gap-1.5 text-muted-foreground">
+                <Activity className="h-3.5 w-3.5" />
+                <span className="text-[11px] leading-4">فراخوانی (۲۴ ساعت / ۷ روز)</span>
+              </div>
+              <span className="text-sm font-bold tabular-nums">
+                {fa(h.calls24h)} / {fa(h.calls7d)}
+              </span>
+            </div>
+            <div className="flex flex-col gap-1.5 rounded-xl border bg-muted/30 p-3 transition-colors hover:bg-muted/60">
+              <div className="flex items-center gap-1.5 text-muted-foreground">
+                <Wifi className="h-3.5 w-3.5" />
+                <span className="text-[11px] leading-4">نرخ موفقیت فراخوانی‌ها</span>
+              </div>
+              <span
+                className={`text-sm font-bold tabular-nums ${
+                  h.successRate >= 90
+                    ? "text-emerald-600 dark:text-emerald-400"
+                    : h.successRate >= 50
+                      ? "text-amber-600 dark:text-amber-400"
+                      : "text-red-600 dark:text-red-400"
+                }`}
+              >
+                {h.okCalls + h.failedCalls > 0 ? `٪${fa(h.successRate)}` : "—"}
+              </span>
+            </div>
+          </div>
+
+          {/* آخرین خطا */}
+          {h.lastErrorAt && (
+            <Alert variant="destructive">
+              <ShieldAlert className="h-4 w-4" />
+              <AlertTitle>آخرین خطای فراخوانی — {sinceLabel(h.lastErrorAt)}</AlertTitle>
               <AlertDescription>
-                تا زمان فعال‌شدن، همهٔ متدهای <code dir="ltr">api/ApiServiceBaran</code> پاسخ خطا
-                می‌دهند و نرم‌افزار باران نمی‌تواند اطلاعاتی ارسال یا دریافت کند. با فعال‌کردن،
-                آدرس و کلید زیر را در تنظیمات نرم‌افزار باران وارد کنید.
+                {h.lastErrorMethod && (
+                  <Badge variant="outline" className="mx-0.5 my-0.5 text-[10px]">
+                    {h.lastErrorMethod}
+                  </Badge>
+                )}
+                {h.lastErrorMessage ?? "جزئیات ثبت نشده — گزارش فراخوانی‌ها را ببینید"}
               </AlertDescription>
             </Alert>
           )}
+
+          {/* آمار همگام‌سازی */}
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
             {statCards.map((c) => (
               <div
@@ -424,6 +617,85 @@ export function BaranManager() {
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
             <Clock className="h-3.5 w-3.5" />
             آخرین همگام‌سازی محصولات: {timeLabel(st.lastProductSyncAt)}
+          </div>
+
+          {/* ---------- تست اتصال ---------- */}
+          <div className="rounded-xl border bg-gradient-to-l from-primary/5 to-transparent p-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="min-w-0 space-y-1">
+                <p className="flex items-center gap-1.5 text-sm font-semibold">
+                  <Wifi className="h-4 w-4 text-primary" />
+                  تست اتصال
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  دقیقاً همان مسیر نرم‌افزار باران از بیرون سایت شبیه‌سازی می‌شود: دسترسی endpoint، الزام و
+                  اعتبار کلید، و پاسخ نهایی — بدون تغییر هیچ داده‌ای
+                </p>
+              </div>
+              <Button size="sm" onClick={() => void runTest()} disabled={testing}>
+                {testing ? <Loader2 className="ml-2 h-4 w-4 animate-spin" /> : <Wifi className="ml-2 h-4 w-4" />}
+                {testing ? "در حال آزمودن…" : "تست اتصال"}
+              </Button>
+            </div>
+
+            {testResult && (
+              <div className="mt-4 space-y-2 rounded-lg border bg-background/70 p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-xs font-semibold">
+                    نتیجهٔ تست ({sinceLabel(testResult.testedAt)}):
+                    <Badge
+                      variant="outline"
+                      className={
+                        "mx-2 " +
+                        (testResult.overall === "healthy"
+                          ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                          : testResult.overall === "issues"
+                            ? "border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400"
+                            : "border-red-500/40 bg-red-500/10 text-red-600 dark:text-red-400")
+                      }
+                    >
+                      {testResult.overall === "healthy"
+                        ? "کاملاً سالم"
+                        : testResult.overall === "issues"
+                          ? "با نکته"
+                          : "ناسالم"}
+                    </Badge>
+                  </span>
+                  {testResult.endpointUrl && (
+                    <code dir="ltr" className="max-w-full truncate rounded bg-muted/60 px-2 py-1 text-[10px]">
+                      {testResult.endpointUrl}
+                    </code>
+                  )}
+                </div>
+                <div className="space-y-1.5">
+                  {testResult.steps.map((step) => (
+                    <div
+                      key={step.key}
+                      className="flex items-start gap-2 rounded-lg border/60 px-2.5 py-2 text-xs"
+                    >
+                      {step.status === "pass" ? (
+                        <CircleCheck className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
+                      ) : step.status === "fail" ? (
+                        <CircleX className="mt-0.5 h-4 w-4 shrink-0 text-red-600 dark:text-red-400" />
+                      ) : step.status === "warn" ? (
+                        <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+                      ) : (
+                        <MinusCircle className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+                      )}
+                      <div className="min-w-0 flex-1">
+                        <span className="font-medium">{step.label}</span>
+                        {step.ms != null && (
+                          <span className="mr-1.5 text-[10px] tabular-nums text-muted-foreground">
+                            {fa(step.ms)}ms
+                          </span>
+                        )}
+                        <p className="mt-0.5 leading-5 text-muted-foreground">{step.detail}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         </CardContent>
       </Card>
