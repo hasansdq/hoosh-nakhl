@@ -1480,3 +1480,21 @@ Stage Summary:
 - ⚠️ نکتهٔ فنی برای آینده: هر فایل TS که وارد کانتکست بیلد شود توسط next build تایپ‌چک می‌شود — اسکریپت‌های عملیاتی جدید یا باید import های سازگار با نصب تازه داشته باشند یا در .dockerignore/خارج از repo باشند
 - ⚠️ تفاوت نسخهٔ bun تصویر oven/bun:1 با سندباکس می‌تواند postinstall وابسته‌ها را متفاوت اجرا کند — بیلد هرگز نباید به stub های اختیاری (مثل .prisma/client) وابسته باشد؛ پس از این کامیت هیچ کدی به @prisma/client ایمپورت ندارد (همه از src/generated/prisma)
 - بک‌لاگ حفظ شد: نمودار روند باران، هشدار proactive، Web Push، نظرات عمومی، CSV دسته‌ها
+
+---
+Task ID: deploy-guide-1
+Agent: Z.ai Code (main)
+Task: پاسخ به درخواست کاربر «نحوه استقرار رو هم بگو! با چه دستوراتی باید دیپلوی کنم؟» — راهنمای استقرار کامل با دستورات دقیق
+
+Work Log:
+- وضعیت git بررسی شد: آخرین کامیت 749f1ba (worklog record) روی 8e0ddf1 (فیکس تایپ‌چک بیلد داکر) — هیچ تغییر کد لازم نیست
+- dev server چک شد: health 200، لاگ تمیز (فقط /api/admin/stats polling طبیعی کرون وب‌ریویو)
+- فایل‌های استقرار مرور و صحت‌سنجی شدند: Dockerfile (بدون syntax directive، آفلاین)، docker/deploy.sh، docker/update.sh، docker/backup.sh، docker/restore.sh، docker/env.example، docker/directadmin/nakhl-proxy.conf، DOCKER-DEPLOY-FA.md (۵۰۰ خط کامل)
+- نکتهٔ مهم شناسایی شد: backup.sh با docker compose exec کار می‌کند → اگر کانتینر قبلاً هرگز بالا نیامده باشد (بیلدهای قبلی کاربر شکست خورده‌اند)، update.sh در گام بک‌اپ می‌شکند → برای استقرار اولِ موفق باید deploy.sh اجرا شود نه update.sh
+- کرون وب‌ریویو ۱۵دقیقه‌ای فعال تأیید شد (job 398092)
+- راهنمای کامل استقرار در پاسخ چت ارائه شد: مسیر کاربر (کد جدید + deploy.sh)، آماده‌سازی شبکهٔ ایران (میرور ابرآروان)، اتصال دامنه دایرکت‌ادمین (Custom HTTPD + SSL + تست WebSocket)، عملیات روزمره (update/backup/restore/logs)، هشدارهای حیاتی (down -v ممنوع)
+
+Stage Summary:
+- کدبیس آمادهٔ دیپلوی است: نسخهٔ 8e0ddf1+ هر دو خطای قبلی بیلد VPS (proxyconnect و typecheck) را رفع کرده
+- دستور کلیدی برای وضعیت فعلی کاربر: جایگزینی کد با نسخهٔ جدید → bash docker/deploy.sh (اولین استقرار موفق)؛ برای دفعات بعد: bash docker/update.sh
+- مرجع کامل مستندات: DOCKER-DEPLOY-FA.md
