@@ -45,6 +45,8 @@ model User {
   role        String    @default("USER") // USER | ADMIN
   status      String    @default("ACTIVE") // ACTIVE | BLOCKED
   note        String? // admin note about user
+  /// شناسه عددی مشتری برای نرم‌افزار باران — طبق مستندات باید > 500000 باشد
+  baranCustomerId Int?
   lastLoginAt DateTime?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
@@ -106,7 +108,13 @@ model Category {
   icon      String? // lucide icon key
   sortOrder Int        @default(0)
   isActive  Boolean    @default(true)
+  /// کد گروه باران (زیرگروه یا سرگروه — بسته به تنظیم categoryLevel)
+  baranGroupId     Int?
+  /// کد سرگروه باران (فقط جهت ارجاع)
+  baranMainGroupId Int?
   items     MenuItem[]
+
+  @@index([baranGroupId])
 }
 
 model MenuItem {
@@ -128,6 +136,14 @@ model MenuItem {
   ingredients String?
   sortOrder   Int      @default(0)
   orderCount  Int      @default(0)
+  /// کد کالا در نرم‌افزار باران (ProductId) — کلید همگام‌سازی
+  baranProductId   Int?
+  /// نام فایل تصویر اعلام‌شده باران (تطبیق با SENDPics)
+  baranPictureName String?
+  /// عنوان واحد کالا (مثلاً «سیخ»)
+  baranUnit        String?
+  /// زمان آخرین همگام‌سازی از باران
+  baranSyncedAt    DateTime?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -136,6 +152,7 @@ model MenuItem {
   favorites  Favorite[]
 
   @@index([categoryId, isAvailable])
+  @@unique([baranProductId])
 }
 
 // ============ Favorites (علاقه‌مندی‌های کاربر) ============
@@ -178,6 +195,10 @@ model Order {
   paymentCard     String?
   paymentError    String?
   paidAt          DateTime?
+  /// شماره فاکتور عددی برای نرم‌افزار باران (هنگام دریافت سفارش تخصیص می‌یابد)
+  baranFactorNumber Int?
+  /// زمان تأیید دریافت سفارش توسط باران (ClearOrders) — مبنای عدم ارسال مجدد
+  baranSentAt       DateTime?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
@@ -188,6 +209,8 @@ model Order {
   @@index([userId, createdAt])
   @@index([status])
   @@index([paymentAuthority])
+  @@index([baranSentAt])
+  @@unique([baranFactorNumber])
 }
 
 model OrderItem {
@@ -361,4 +384,36 @@ model AuditLog {
   createdAt DateTime @default(now())
 
   @@index([createdAt])
+}
+
+// ============ Baran accounting software integration ============
+// گزارش هر فراخوانی API توسط نرم‌افزار باران (ProductSEND / SENDPics /
+// Orders / ClearOrders) برای پایش و عیب‌یابی اتصال از پنل مدیریت.
+model BaranSyncLog {
+  id        String   @id @default(cuid())
+  method    String // ProductSEND | SENDPics | Orders | ClearOrders
+  totalCount Int    @default(0)
+  okCount   Int     @default(0)
+  failCount Int     @default(0)
+  message   String? // خلاصهٔ فارسی
+  detail    String? // JSON — خطاهای سطری (کوتاه‌شده)
+  ip        String?
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+}
+
+// تصویر دریافتی از باران (SENDPics) — تطبیق با MenuItem.baranPictureName.
+// اگر تصاویر قبل از اطلاعات کالا برسند، با رسیدن کالا متصل می‌شوند و برعکس.
+model BaranAsset {
+  id        String   @id @default(cuid())
+  fileName  String   @unique // PicFileName اعلام‌شده باران
+  mimeType  String
+  size      Int
+  url       String // /f/<key>
+  linkedMenuItemId String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([linkedMenuItemId])
 }

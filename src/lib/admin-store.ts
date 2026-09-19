@@ -20,6 +20,7 @@ export type AdminTab =
   | "reviews"
   | "settings"
   | "tools"
+  | "baran"
   | "uploads"
   | "audit";
 

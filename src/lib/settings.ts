@@ -68,6 +68,23 @@ export interface GeneralSettings {
   aboutText: string;
 }
 
+export interface BaranSettings {
+  /** کلید اصلی — تا زمان فعال‌شدن، همهٔ متدهای api/ApiServiceBaran پاسخ 503 می‌دهند */
+  enabled: boolean;
+  /** کلید API — در هدر X-Api-Key / Authorization: Bearer / کوئری apikey پذیرفته می‌شود */
+  apiKey: string;
+  /** الزام کلید (اگر نرم‌افزار امکان ارسال هدر را نداشت، خاموش شود) */
+  requireKey: boolean;
+  /** ساخت دسته‌بندی منو از زیرگروه (پیش‌فرض) یا سرگروه باران */
+  categoryLevel: "group" | "main";
+  /** مدیریت موجودی از باران (IgnoreStock/RemainCount → isAvailable) */
+  stockSync: boolean;
+  /** ChangeType=2 → مخفی‌سازی آیتم به‌جای حذف (حفظ تاریخ سفارش‌ها) */
+  hideDeleted: boolean;
+  /** ارسال سفارش‌های «در انتظار پرداخت» هم به باران (پیش‌فرض: فقط پرداخت‌شده‌ها) */
+  includePendingOrders: boolean;
+}
+
 // ============ Defaults ============
 
 export const DEFAULT_AI_SETTINGS: AISettings = {
@@ -134,17 +151,28 @@ export const DEFAULT_GENERAL_SETTINGS: GeneralSettings = {
     "رستوران نخل رفسنجان با بیش از یک دهه تجربه در ارائه غذاهای اصیل ایرانی، اکنون با هوش مصنوعی «هوش نخل» تجربه سفارش‌دهی جدیدی را به شما هدیه می‌دهد. مثل حضوری سفارش بدهید، اما از هر جای شهر!",
 };
 
+export const DEFAULT_BARAN_SETTINGS: BaranSettings = {
+  enabled: false,
+  apiKey: "",
+  requireKey: true,
+  categoryLevel: "group",
+  stockSync: true,
+  hideDeleted: true,
+  includePendingOrders: false,
+};
+
 // ============ Manager ============
 
-export type SettingsGroup = "ai" | "sms" | "payment" | "general";
+export type SettingsGroup = "ai" | "sms" | "payment" | "general" | "baran";
 
-type AnySettings = AISettings | SMSSettings | PaymentSettings | GeneralSettings;
+type AnySettings = AISettings | SMSSettings | PaymentSettings | GeneralSettings | BaranSettings;
 
 const DEFAULT_SETTINGS: Record<SettingsGroup, AnySettings> = {
   ai: DEFAULT_AI_SETTINGS,
   sms: DEFAULT_SMS_SETTINGS,
   payment: DEFAULT_PAYMENT_SETTINGS,
   general: DEFAULT_GENERAL_SETTINGS,
+  baran: DEFAULT_BARAN_SETTINGS,
 };
 
 interface SettingsCache {

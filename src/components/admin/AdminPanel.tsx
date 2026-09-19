@@ -19,6 +19,7 @@ import { ReviewsManager } from "./ReviewsManager";
 import { AdminSettings } from "./AdminSettings";
 import { ContentManager } from "./ContentManager";
 import { ToolsManager } from "./ToolsManager";
+import { BaranManager } from "./BaranManager";
 import { UploadsManager, AuditLogView } from "./UploadsAudit";
 import { AdminSearchPalette, type AdminSearchSelection } from "./AdminSearchPalette";
 import { ThemeToggle } from "@/components/ThemeToggle";
@@ -44,6 +45,7 @@ import {
   X,
   ShieldCheck,
   Search,
+  Cable,
 } from "lucide-react";
 
 const TABS: { key: AdminTab; label: string }[] = [
@@ -57,6 +59,7 @@ const TABS: { key: AdminTab; label: string }[] = [
   { key: "reviews", label: "نظرات" },
   { key: "settings", label: "تنظیمات" },
   { key: "tools", label: "ابزارها" },
+  { key: "baran", label: "اتصال باران" },
   { key: "uploads", label: "فایل‌ها" },
   { key: "audit", label: "گزارش‌ها" },
 ];
@@ -72,6 +75,7 @@ const TAB_ICONS: Record<AdminTab, React.ElementType> = {
   reviews: Star,
   settings: Settings,
   tools: Wrench,
+  baran: Cable,
   uploads: UploadCloud,
   audit: ScrollText,
 };
@@ -506,6 +510,7 @@ export function AdminPanel() {
           {tab === "reviews" && <ReviewsManager />}
           {tab === "settings" && <AdminSettings />}
           {tab === "tools" && <ToolsManager />}
+          {tab === "baran" && <BaranManager />}
           {tab === "uploads" && <UploadsManager />}
           {tab === "audit" && <AuditLogView />}
         </main>

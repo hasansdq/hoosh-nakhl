@@ -155,7 +155,7 @@ export function AuthModal() {
   };
 
   return (
-    <Dialog open={authOpen} onOpenChange={(open) => !open && close()} dir="rtl">
+    <Dialog open={authOpen} onOpenChange={(open) => !open && close()}>
       <DialogContent className="max-w-md rounded-2xl p-0 overflow-hidden" aria-describedby="auth-desc">
         {/* header banner */}
         <div className="relative bg-gradient-to-l from-primary to-primary/80 px-6 pb-8 pt-6 text-primary-foreground">
