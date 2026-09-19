@@ -1426,3 +1426,26 @@ Stage Summary:
 - ✅ زنجیرهٔ باران برای اولین بار در حالت standalone پروداکشن E2E شد (بیلد + بوت + ProductSEND واقعی + سلامت + تست اتصال) — پیش از این فقط dev تست شده بود
 - ⚠️ نکتهٔ عملیاتی برای کاربر: آپدیت = جایگزینی فایل‌ها + `bash docker/update.sh`؛ قبل از آپدیت دستی `bash docker/backup.sh` اختیاری است (update.sh خودش می‌گیرد)؛ هرگز `down -v` نکنید؛ در صورت مشکل `bash docker/restore.sh backups/<آخرین>` برگردان
 - پیشنهاد آینده: نگه‌داشتن snapshot خارج از سرور (فضای خصوصی)، تست دوره‌ای restore
+
+---
+Task ID: docker-build-offline-1
+Agent: Z.ai Code (main)
+Task: رفع خطای واقعی کاربر هنگام آپدیت داکری روی VPS — «failed to resolve docker.io/docker/dockerfile:1: proxyconnect tcp: dial tcp 140.233.177.87:8888: i/o timeout»
+
+Work Log:
+- **تشخیص ریشه (دو عامل هم‌زمان):** (۱) خط ۱ Dockerfile یعنی `# syntax=docker/dockerfile:1` — BuildKit را مجبور می‌کرد *قبل از هر کاری* ایمیج فرانت خارجی را از docker.io resolve کند — این مرحله حتی وقتی همهٔ ایمیج‌های پایه کش‌شده‌اند هم شبکه می‌خواهد؛ (۲) دیمن داکر روی VPS با HTTP proxy مرده (140.233.177.87:8888) پیکربندی شده که timeout می‌خورد (علامت `proxyconnect`)
+- **بررسی سازگاری:** Dockerfile هیچ ویژگی وابسته به فرانت خارجی ندارد (بدون --mount/heredoc/COPY --link/--network — rg تأیید) → حذف directive صددرصد امن است؛ multi-stage و COPY --from و HEALTHCHECK و VOLUME و USER همه در فرانت باندل‌شدهٔ خود Docker Engine (18.09+) پشتیبانی می‌شوند → با کش بودن oven/bun:1 و node:22-slim (که `docker image prune -f` بدون -a هرگز حذفشان نمی‌کند) بیلد کاملاً آفلاین می‌شود
+- **Dockerfile:** directive حذف و دلیلش در هدر مستند شد (هشدار برای آینده: اگر روزی heredoc/--mount اضافه شد، قابلیت بیلد آفلاین VPS را در نظر بگیرید)
+- **update.sh:** (الف) net_preflight قبل از بیلد — پروکسی دیمن از `docker info` استخراج و با اتصال TCP چهارثانیه‌ای تست می‌شود (مرده → هشدار + ارجاع به سند)؛ ایمیج‌های پایه با `docker image inspect` چک می‌شوند (غایب → هشدار + دستورات pull+tag از میرور docker.arvancloud.ir) — فقط هشدار، نه شکستن (شاید رجیستری سالم باشد) (ب) بیلد با `tee` به لاگ موقت (mktemp + trap EXIT)؛ در شکست، الگوی `proxyconnect|deadline ?exceeded|i/o timeout|failed to resolve` → بلوک سه‌مسیرهٔ رفع فارسی (حذف پروکسی مرده از systemd drop-in/daemon.json/config.json → میرور registry-mirrors → pull+tag دستی) + اطمینان‌رسانی صریح: کانتینر فعلی سرویس‌دهی، بک‌اپ گام ۱ گرفته شده، هیچ چیزی تغییر نکرده
+- **deploy.sh:** همان net_preflight و همان تشخیص شکست بیلد (متن مناسب استقرار اولیه: «هنوز چیزی سرویس‌دهی نمی‌کند») — اسکریپت‌ها عمداً self-contained ماندند (بدون lib مشترک) تا در جریان overlay فایل روی VPS، نبودِ یک فایل هیچ اسکریپتی را نشکند
+- **DOCKER-DEPLOY-FA.md:** §۳ نکتهٔ ایران (تنظیم میرور قبل از pull + اینکه بیلد نخل با کش ایمیج‌های پایه آفلاین است) + §۱۰ زیربخش کامل «خطای شبکه هنگام بیلد» با متن دقیق خطا و سه گام رفع و یادداشت چرایی
+- **تست‌ها (داکر در سندباکس نیست → تست نقطه‌ای منطق):** bash -n هر دو اسکریپت ✓ · net_preflight با docker شبیه‌سازی‌شده در سه سناریو: پروکسی مرده + ایمیج غایب (هشدار درست با آدرس پروکسی پارس‌شده) / پروکسی پاسخ‌گو + کش کامل (سکوت) / docker قدیمی بدون اطلاعات پروکسی (سکوت) ✓ · الگوی تشخیص با متن دقیق خطای کاربر MATCH و با خطای غیرشبکه‌ای NO-FALSE-POSITIVE ✓ · شاخهٔ `if ! cmd | tee` با pipefail وارد شد و لاگ در فایل افتاد ✓ · خط ۱ Dockerfile دیگر directive نیست ✓ · lint صفر · tsc صفر · dev stack سالم (health 200، dev.log پاک)
+- کامیت: `af55f9e` (چهار فایل: Dockerfile، docker/update.sh، docker/deploy.sh، DOCKER-DEPLOY-FA.md)
+
+Stage Summary:
+- ✅ خطای بیلد روی VPS ریشه‌ای رفع شد: بیلد نخل از این پس به docker.io وصل نمی‌شود (به شرط کش بودن دو ایمیج پایه)؛ مشکل پروکسی مردهٔ دیمن هم با راهنمای سه‌گامه در اسکریپت و سند پوشش داده شد
+- ✅ برای کاربر: روی VPS یا git pull/overlay نسخهٔ جدید (af55f9e) و `bash docker/update.sh`، یا وصلهٔ فوری بدون آپدیت کد: `sed -i '1{/^# syntax=docker\/dockerfile:1$/d}' Dockerfile`
+- ✅ در شکست بیلد هیچ داده‌ای در خطر نیست: update.sh اول بک‌اپ VACUUM INTO می‌گیرد، کانتینر قدیمی تا healthy شدن نسخهٔ جدید سرویس‌دهی می‌کند، volume هرگز لمس نمی‌شود (تنها down -v خطرناک است — ممنوع)
+- ⚠️ اگر ایمیج‌های پایه روی VPS نباشند (مثلاً پس از prune -a): فقط pull+tag از docker.arvancloud.ir لازم است (دستورات در §۱۰ و خروجی خود اسکریپت)
+- ⚠️ داکر دیمن در سندباکس در دسترس نیست → تست کامل `docker compose build` روی VPS کاربر نهایی است؛ اما حذف directive به‌صورت استاتیک اثبات‌شده امن است (هیچ ویژگی فرانت-خواهی در Dockerfile نیست)
+- بک‌لاگ قبلی حفظ شد: نمودار روند باران، هشدار proactive، Web Push، نظرات عمومی، CSV دسته‌ها
