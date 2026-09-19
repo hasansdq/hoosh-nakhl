@@ -71,6 +71,13 @@ docker compose version   # باید v2 نمایش داده شود
 > اگر دانلود از get.docker.com در سرور ایران مشکل داشت، داکر را از مخزن توزیع خود نصب کنید
 > (`apt install docker.io docker-compose-v2`) یا از آینهٔ داخلی استفاده کنید.
 
+> **نکتهٔ مهم برای سرورهای ایران:** docker.io از بسیاری از IPهای ایران مستقیم در
+> دسترس نیست. اگر قصد pull ایمیج دارید، قبل از آن میرور ابرآروان را طبق
+> §۱۰ («خطای شبکه هنگام بیلد» — گام ۲) تنظیم کنید. خودِ پروژه طوری ساخته شده که
+> به شرط کش بودن دو ایمیج پایه، **بیلد آن به docker.io نیازی ندارد** (Dockerfile
+> عمداً بدون directive «# syntax=» نوشته شده و `update.sh` پیش از بیلد، وضعیت
+> پروکسی دیمن و ایمیج‌های پایه را بررسی و راهنمایی چاپ می‌کند).
+
 ## ۴) دریافت کد پروژه روی سرور
 
 ```bash
@@ -351,6 +358,73 @@ docker compose up -d           # بازسازی mapping
 | آپلود فایل بزرگ رد می‌شود | `LimitRequestBody` آپاچی | در `nakhl-proxy.conf` بزرگ‌تر کنید (پیش‌فرض ۶MB) |
 | ساعت‌ها عقب‌اند | TZ | `TZ=Asia/Tehran` در .env + `docker compose up -d` |
 | بوت اول خیلی طول کشید | عادی است | مهاجرت + سید اولین بار انجام می‌شود؛ healthcheck تا ۶۰s فرصت دارد |
+
+### خطای شبکه هنگام بیلد — `proxyconnect` / `i/o timeout` / `DeadlineExceeded`
+
+اگر `docker compose build` (داخل `deploy.sh` یا `update.sh`) در همان ابتدا با
+خطایی مثل این شکست خورد، مشکل از دسترسی داکر به رجیستری است — **نه از کد پروژه**:
+
+```
+ERROR: resolve image config for docker-image://docker.io/docker/dockerfile:1
+failed to resolve source metadata for docker.io/docker/dockerfile:1:
+proxyconnect tcp: dial tcp x.x.x.x:8888: i/o timeout
+```
+
+**گام ۱ — پروکسی مرده را پیدا و حذف/اصلاح کنید.** عبارت `proxyconnect` یعنی دیمن
+داکر دارد از یک HTTP proxy استفاده می‌کند که جواب نمی‌دهد (پروکسی خاموش/فیلتر
+شده است). پروکسی دیمن در یکی از این مکان‌هاست:
+
+```bash
+docker info | grep -i proxy            # پروکسی‌های فعال دیمن/کلاینت را نشان می‌دهد
+systemctl show docker --property=Environment
+cat /etc/docker/daemon.json            # کلید proxies در داکرهای جدید
+ls /etc/systemd/system/docker.service.d/ 2>/dev/null   # فایل‌های http-proxy.conf
+cat ~/.docker/config.json              # proxies سمت کلاینت (به RUN های بیلد تزریق می‌شود)
+```
+
+پروکسی را از هر کجا بود حذف کنید (یا اگر پروکسی سالمی دارید، آدرس درست بدهید) و
+سپس دیمن را ری‌استارت کنید:
+
+```bash
+systemctl daemon-reload && systemctl restart docker
+```
+
+**گام ۲ — اگر docker.io بدون پروکسی هم در دسترس نیست: میرور ابرآروان.** کلید
+`registry-mirrors` را به `/etc/docker/daemon.json` اضافه کنید (اگر فایل از قبل
+کلید دیگری دارد، فقط همین کلید را به آن اضافه کنید و بقیه را نگه دارید):
+
+```json
+{
+  "registry-mirrors": ["https://docker.arvancloud.ir"]
+}
+```
+
+```bash
+systemctl restart docker   # کانتینرها با restart:unless-stopped خودشان برمی‌گردند — داده‌ها روی volume امن‌اند
+```
+
+> میرور ابرآروان فقط واسط Docker Hub است؛ اگر روزی آدرس عوض شد، هر میرور
+> دیگری از Docker Hub همین نقش را دارد.
+
+**گام ۳ — راه سریع بدون دست زدن به دیمن:** فقط دو ایمیج پایه را از میرور بکشید و
+همان نام معروف را رویشان بزنید تا Dockerfile همان‌ها را از کش محلی بردارد:
+
+```bash
+docker pull docker.arvancloud.ir/oven/bun:1 \
+  && docker tag docker.arvancloud.ir/oven/bun:1 oven/bun:1
+docker pull docker.arvancloud.ir/library/node:22-slim \
+  && docker tag docker.arvancloud.ir/library/node:22-slim node:22-slim
+```
+
+بعد از رفع: **به‌روزرسانی** → `bash docker/update.sh` (کانتینر قبلی و داده‌ها
+دست‌نخورده‌اند؛ اسکریپت اول بک‌اپ می‌گیرد) · **استقرار اولیه** → `bash docker/deploy.sh`.
+
+> چرا این خطا برای نخل کمتر تکرار می‌شود: Dockerfile این پروژه عمداً بدون
+> directive «# syntax=docker/dockerfile:1» نوشته شده است — آن خط BuildKit را
+> مجبور می‌کرد *قبل از هر کاری* ایمیج فرانت را از docker.io بکشد. تمام
+> ویژگی‌های استفاده‌شده در Dockerfile داخل خود Docker Engine پشتیبانی می‌شوند؛
+> بنابراین به شرط موجود بودن دو ایمیج پایه در کش محلی، بیلد کاملاً آفلاین
+> انجام می‌شود.
 
 ---
 

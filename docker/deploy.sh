@@ -18,6 +18,34 @@ ROOT_DIR="$(pwd)"
 bold()  { printf '\033[1m%s\033[0m\n' "$1"; }
 ok()    { printf '  \033[32m✓\033[0m %s\n' "$1"; }
 err()   { printf '  \033[31m✗\033[0m %s\n' "$1" >&2; }
+warn()  { printf '  \033[33m⚠\033[0m %s\n' "$1"; }
+
+# --- پیش‌پروازش شبکهٔ داکر (سرورهای ایران) ------------------------------------
+# فقط «آگاهی‌رسانی» است — Dockerfile بدون directive «# syntax=…» نوشته شده و
+# بیلد برای خودش به docker.io وصل نمی‌شود؛ اما استقرار اولیه باید دو ایمیج
+# پایه را از جایی بکشد (میرور ابرآروان اگر رجیستری اصلی در دسترس نیست).
+net_preflight() {
+  DAEMON_PROXY="$(docker info 2>/dev/null | awk -F': ' '/^ *(HTTP|HTTPS) Proxy:/{print $2; exit}' | tr -d ' ' || true)"
+  if [ -n "${DAEMON_PROXY}" ]; then
+    P_ADDR="${DAEMON_PROXY#*://}"; P_ADDR="${P_ADDR%%/*}"
+    if timeout 4 bash -c "</dev/tcp/${P_ADDR%:*}/${P_ADDR##*:}" 2>/dev/null; then
+      ok "پروکسی دیمن داکر (${DAEMON_PROXY}) پاسخ می‌دهد"
+    else
+      warn "پروکسی پیکربندی‌شده روی داکر (${DAEMON_PROXY}) پاسخ نمی‌دهد — هر pull از رجیستری شکست می‌خورد"
+      warn "راه‌حل: DOCKER-DEPLOY-FA.md §۱۰ → «خطای شبکه هنگام بیلد» (گام ۱)"
+    fi
+  fi
+  MISSING_BASE=""
+  for IMG in "oven/bun:1" "node:22-slim"; do
+    docker image inspect "${IMG}" >/dev/null 2>&1 || MISSING_BASE="${MISSING_BASE} ${IMG}"
+  done
+  if [ -n "${MISSING_BASE}" ]; then
+    warn "ایمیج‌های پایه به‌صورت محلی موجود نیستند:${MISSING_BASE}"
+    warn "اگر docker.io روی این سرور در دسترس نیست، از میرور بکشید و همان نام را بزنید:"
+    echo  "        docker pull docker.arvancloud.ir/oven/bun:1 && docker tag docker.arvancloud.ir/oven/bun:1 oven/bun:1"
+    echo  "        docker pull docker.arvancloud.ir/library/node:22-slim && docker tag docker.arvancloud.ir/library/node:22-slim node:22-slim"
+  fi
+}
 
 bold "═══ رستوران نخل — استقرار Docker ═══"
 
@@ -37,7 +65,37 @@ fi
 
 # ---------- 2. ساخت و راه‌اندازی ----------
 bold "ساخت ایمیج (چند دقیقه — لایه‌ها کش می‌شوند)…"
-docker compose build
+net_preflight
+BUILD_LOG="$(mktemp /tmp/nakhl-deploy-XXXXXX.log)"
+trap 'rm -f "${BUILD_LOG}"' EXIT
+
+if ! docker compose build 2>&1 | tee "${BUILD_LOG}"; then
+  bold "✗ ساخت ایمیج شکست خورد — استقرار ناتمام ماند (هنوز چیزی سرویس‌دهی نمی‌کند)"
+  echo
+  if grep -qiE 'proxyconnect|deadline ?exceeded|i/o timeout|failed to resolve' "${BUILD_LOG}"; then
+    bold "  تشخیص: خطای شبکه/رجیستری داکر (در سرورهای ایران رایج). سه مسیر رفع:"
+    echo
+    echo  "  ۱) پروکسی مردهٔ دیمن داکر را پیدا و حذف/اصلاح کنید:"
+    echo  "       docker info | grep -i proxy"
+    echo  "       systemctl show docker --property=Environment"
+    echo  "       cat /etc/docker/daemon.json"
+    echo  "       ls /etc/systemd/system/docker.service.d/ 2>/dev/null"
+    echo  "     سپس:  systemctl daemon-reload && systemctl restart docker"
+    echo
+    echo  "  ۲) اگر docker.io بدون پروکسی هم باز نیست — میرور ابرآروان در daemon.json:"
+    echo  "       { \"registry-mirrors\": [\"https://docker.arvancloud.ir\"] }"
+    echo  "     سپس:  systemctl restart docker"
+    echo
+    echo  "  ۳) راه سریع بدون دست زدن به دیمن — فقط ایمیج‌های پایه را از میرور بکشید:"
+    echo  "       docker pull docker.arvancloud.ir/oven/bun:1 && docker tag docker.arvancloud.ir/oven/bun:1 oven/bun:1"
+    echo  "       docker pull docker.arvancloud.ir/library/node:22-slim && docker tag docker.arvancloud.ir/library/node:22-slim node:22-slim"
+    echo
+    echo  "  راهنمای کامل: DOCKER-DEPLOY-FA.md §۱۰ (خطای شبکه هنگام بیلد)"
+  else
+    echo  "  لاگ کامل بیلد در همین خروجی بالاست؛ جدول رفع اشکال: DOCKER-DEPLOY-FA.md §۱۰"
+  fi
+  exit 1
+fi
 
 bold "راه‌اندازی کانتینر…"
 docker compose up -d

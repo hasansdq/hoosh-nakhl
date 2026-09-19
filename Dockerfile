@@ -1,6 +1,17 @@
-# syntax=docker/dockerfile:1
 # =============================================================================
 # Nakhl Restaurant — production image (multi-stage · Docker / VPS target)
+# -----------------------------------------------------------------------------
+# NOTE — deliberately NO «# syntax=docker/dockerfile:1» directive on line 1!
+# That directive makes BuildKit fetch the EXTERNAL dockerfile frontend image
+# from docker.io before building anything at all — on Iranian VPSs docker.io
+# is typically unreachable (dead HTTP proxy / filtering) and the build dies
+# instantly with:
+#   failed to resolve docker.io/docker/dockerfile:1: proxyconnect … i/o timeout
+# Every feature used below (multi-stage, COPY --from, ARG, ENV, HEALTHCHECK,
+# VOLUME, USER) is supported by the dockerfile frontend BUNDLED inside Docker
+# Engine itself — with the two base images cached locally, this build needs
+# ZERO registry/network access. (If you ever add heredocs, --mount or
+# COPY --link, reconsider — but keep VPS offline-build capability in mind.)
 # -----------------------------------------------------------------------------
 # Build:    docker compose build          (or docker build -t nakhl-restaurant .)
 # Runtime:  ONE Node.js process — docker/app-server.js boots the Next.js
