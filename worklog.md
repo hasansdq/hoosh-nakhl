@@ -1449,3 +1449,34 @@ Stage Summary:
 - ⚠️ اگر ایمیج‌های پایه روی VPS نباشند (مثلاً پس از prune -a): فقط pull+tag از docker.arvancloud.ir لازم است (دستورات در §۱۰ و خروجی خود اسکریپت)
 - ⚠️ داکر دیمن در سندباکس در دسترس نیست → تست کامل `docker compose build` روی VPS کاربر نهایی است؛ اما حذف directive به‌صورت استاتیک اثبات‌شده امن است (هیچ ویژگی فرانت-خواهی در Dockerfile نیست)
 - بک‌لاگ قبلی حفظ شد: نمودار روند باران، هشدار proactive، Web Push، نظرات عمومی، CSV دسته‌ها
+
+---
+Task ID: docker-build-typecheck-1
+Agent: Z.ai Code (main)
+Task: رفع خطای دوم بیلد داکر روی VPS — «Module '"@prisma/client"' has no exported member 'PrismaClient'» در prisma/attach-images.ts + درخواست کاربر برای داکرایز کامل، بدون خطا، امن و با حفظ داده‌ها
+
+Work Log:
+- **ریشه‌یابی:** خط اول بیلد قبلاً روی directive «# syntax» می‌شکست (رفع: af55f9e)؛ این‌بار خود `next build` شکست: `prisma/attach-images.ts` و `prisma/seed.ts` از `@prisma/client` ایمپورت می‌کردند اما اسکیما با generator جدید (`provider="prisma-client"`, `output="../src/generated/prisma"`, `runtime="workerd"`) کلاینت را فقط در مسیر سفارشی تولید می‌کند — در نصب تازه، `@prisma/client` هیچ PrismaClient ای ندارد. در سندباکس پاس می‌شد چون `node_modules/.prisma/client` قدیمی از قبل مانده بود (فاصلهٔ وفاداری شبیه‌سازی قبلی با داکر واقعی — شبیه‌سازی‌های قبل node_modules سندباکس را استفاده می‌کردند)
+- **تاریخچه:** worklog f1391b5 نشان داد این دو فایل قبلاً «منسوخ» اعلام و حذف شده بودند و بعداً به‌اشتباه برگشته‌اند؛ هیچ اسکریپت/ارجاعی به آن‌ها نیست؛ مسیر seed واقعی: Docker= docker/seed.mjs + seed/*.sql، dev/CF= wrangler d1 execute؛ تصاویر (۲۲ ارجاع /food/) در seed-core.sql موجودند → هر دو حذف شدند (فقط ۲۷۶ خط حذف، صفر خط جدید اپ)
+- **سخت‌سازی .dockerignore:** backups (خروجی backup.sh روی VPS — کپی کامل DB با PII/هش/کلیدها که تا حالا وارد کانتکست بیلد می‌شد!)، upload، Caddyfile.prod، deploy و tests (artifact های کیت قدیمی Node) — هیچ‌کدام در رانتایم لازم نیستند
+- **DEPLOY-FA.md:** بنر منسوخ‌شدن با ارجاع به DOCKER-DEPLOY-FA.md (سند قدیمی معماری web+notify+caddy را توصیف می‌کرد)
+- **کلین‌روم کامل (نکتهٔ کلیدی این تسک):** سیم دقیقاً مثل builder داکر: کپی بدون node_modules/.next/.git/src/generated/db/backups (وفادار به .dockerignore) → `bun install --frozen-lockfile` (postinstall تولید کرد) → حذف عمدی `node_modules/.prisma` (بدترین حالت — همان وضعیت VPS شکست‌خورده) → `bunx prisma generate` → `NAKHL_DOCKER_BUILD=1 NEXT_PUBLIC_SOCKET_PATH=/api/ws bun run build` → **✓ Compiled successfully + TypeScript بدون خطا + ۶۰/۶۰ صفحه + standalone تولید شد** (خطای «No database backend» در فاز collect رفتار عادی pre-existing محیط بدون DB است)
+- **چیدمان runner طبق Dockerfile + runtime-deps پین‌شده جدا** (@libsql/client@0.18.0, @prisma/adapter-libsql@6.19.3, socket.io@4.8.3, sharp@0.34.5, z-ai-web-dev-sdk@0.0.18) و merge در standalone
+- **فیکسچر VPS قدیمی:** دیتابیس با 0001+0002 (با tracking مثل migrate.mjs واقعی) + seed + دادهٔ زنده: ادمین اختصاصی rayan-vps-admin با رمز خودش، کاربر+آدرس، سفارش PAID (NK-OLD001، ۴۲۹٬۰۰۰، ۲ قلم)، قیمت/توضیح آیتم ویرایش‌شده، تنظیم freeDeliveryOver=750000
+- **بوت نسخهٔ جدید (entrypoint واقعی):** کلید notify تولید و persisted شد ✓ 0003 اعمال شد (forward-only) ✓ seed ایدمپوتنت، «admin bootstrap skipped — 1 existing admin preserved» ✓
+- **حفظ داده (همهٔ ۲۳+ بررسی سبز):** ورود با اعتبارنامهٔ قدیمی 200 ✓ رمز غلط 401 ✓ منو ۳۰/دسته ۷/کوپن ۳ بدون تکرار ✓ سفارش/کاربر/آدرس/اقلام دست‌نخورده ✓ آیتم ویرایش‌شده (۲۵۰٬۰۰۰ + توضیح) ✓ تنظیم 750000 ✓ مهاجرت‌ها ۳ تا ✓
+- **بوت دوم:** کلید از secrets.env restore شد («unchanged since first boot») ✓ مهاجرت no-op ✓ seed no-op ✓ شمارش‌ها ثابت ✓
+- **فاجعه/بازیابی:** VACUUM INTO (0.36MB) → حذف کامل DB → restore.mjs (admins=1, menuItems=30) → بوت سوم: همهٔ داده‌ها + ورود ادمین قدیمی 200 ✓
+- **امنیت پروداکشن:** کیل‌سوییچ پرداخت /api/payment/simulate → 403 ✓ /emit بدون کلید 401 ✓ باران: خاموش 503 / بدون کلید 401 / کلید غلط 401 ✓ admin بدون سشن 401 ✓ CMS: stats/menu/baran با کوکی 200 ✓
+- **باران E2E روی همین بیلد پروداکشن:** فعال‌سازی از پنل → Ping با کلید ok → ProductSEND با قرارداد دقیق مستندات (ProductId/MainGroupId/GroupId/SellPrice/ChangeType=0) → «کالا ایجاد شد» StatusId=1 → verdict از failing به healthy رفت (خطاهای عمدی قبلی با نام فیلد اشتباه هم اعتبارسنجی سطری را اثبات کردند) → آیتم روی فروشگاه (۳۱ آیتم) ✓
+- **رجRESSION:** lint صفر ✓ tsc صفر ✓ dev stack بازگشت (notify-service double-fork → next dev خودکار، health 200) ✓ صفحهٔ اصلی agent-browser بدون خطای کنسول (فقط هشدار LCP pre-existing) ✓
+- کامیت: `8e0ddf1`
+
+Stage Summary:
+- ✅ بیلد داکر حالا در «بدترین حالت» (git clone تازه + نصب تازه + بدون stub) اثبات‌شده بدون خطا است؛ دو فایل legacy ریشهٔ شکست بودند و حذف شدند
+- ✅ برای کاربر روی VPS: فایل‌های نسخهٔ جدید (8e0ddf1) را جایگزین کنید (git pull یا overlay) و `bash docker/update.sh` — این بار باید تا انتها برسد (مرحلهٔ شبکه در af55f9e رفع شده بود، مرحلهٔ تایپ در این کامیت)
+- ✅ مسیر آپدیت از نظر داده بی‌خطر است و روی همین بیلد اثبات شد: بک‌اپ قبل از بیلد → مهاجرت forward-only → seed ایدمپوتنت → ادمین/سفارش/تنظیمات قدیمی دست‌نخورده؛ rollback با restore.sh
+- ✅ .dockerignore حالا snapshot های PII (backups/) را هم از کانتکست بیلد بیرون می‌کند
+- ⚠️ نکتهٔ فنی برای آینده: هر فایل TS که وارد کانتکست بیلد شود توسط next build تایپ‌چک می‌شود — اسکریپت‌های عملیاتی جدید یا باید import های سازگار با نصب تازه داشته باشند یا در .dockerignore/خارج از repo باشند
+- ⚠️ تفاوت نسخهٔ bun تصویر oven/bun:1 با سندباکس می‌تواند postinstall وابسته‌ها را متفاوت اجرا کند — بیلد هرگز نباید به stub های اختیاری (مثل .prisma/client) وابسته باشد؛ پس از این کامیت هیچ کدی به @prisma/client ایمپورت ندارد (همه از src/generated/prisma)
+- بک‌لاگ حفظ شد: نمودار روند باران، هشدار proactive، Web Push، نظرات عمومی، CSV دسته‌ها
