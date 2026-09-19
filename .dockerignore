@@ -42,10 +42,17 @@ dev.log
 # --- runtime data (belongs to the volume, not the image) ---
 db
 docker/backups
+# host-side backup snapshots (docker/backup.sh writes ./backups on the VPS) —
+# full database copies with PII/password hashes/API keys: NEVER into the build
+# context (they would land in builder-stage layers and bloat the context)
+backups
+# sandbox artifacts (uploaded reference files)
+upload
 
 # --- misc repo files not needed at runtime ---
 scripts
 Caddyfile
+Caddyfile.prod
 wrangler.jsonc
 wrangler.toml
 open-next.config.ts
@@ -53,3 +60,6 @@ open-next.config.ts
 .dockerignore
 docker-compose.yml
 Dockerfile
+# legacy Node-kit artifacts (pre-DirectAdmin architecture — see DEPLOY-FA.md banner)
+deploy
+tests
