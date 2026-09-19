@@ -88,22 +88,36 @@ export async function GET() {
       ? [...SENDABLE, "PENDING_PAYMENT"]
       : SENDABLE;
 
-    const [productsSynced, categoriesLinked, imagesReceived, ordersPending, ordersSent, maxSync, logs, items] =
+    // شمارش‌ها عددی‌اند و هرگز با تبدیل DateTime خطا نمی‌دهند؛
+    // سه کوئری داده‌محور (max sync / لاگ / اقلام) به‌صورت مستقل allSettled
+    // اجرا می‌شوند تا یک ردیف ناسازگار (مثلاً تاریخ غیر-ISO از دخالت خارجی
+    // در ستون baranSyncedAt) کل تب را با 500 از کار نیندازد — در بدترین
+    // حالت همان بخش خالی برمی‌گردد و بقیهٔ پنل کار می‌کند.
+    const [productsSynced, categoriesLinked, imagesReceived, ordersPending, ordersSent] =
       await Promise.all([
         db.menuItem.count({ where: { baranProductId: { not: null } } }),
         db.category.count({ where: { baranGroupId: { not: null } } }),
         db.baranAsset.count(),
         db.order.count({ where: { baranSentAt: null, status: { in: sendable } } }),
         db.order.count({ where: { baranSentAt: { not: null } } }),
-        db.menuItem.aggregate({ _max: { baranSyncedAt: true } }),
-        db.baranSyncLog.findMany({ orderBy: { createdAt: "desc" }, take: 30 }),
-        db.menuItem.findMany({
-          where: { baranProductId: { not: null } },
-          orderBy: { baranSyncedAt: "desc" },
-          take: 60,
-          include: { category: { select: { name: true } } },
-        }),
       ]);
+
+    const [maxSyncR, logsR, itemsR] = await Promise.allSettled([
+      db.menuItem.aggregate({ _max: { baranSyncedAt: true } }),
+      db.baranSyncLog.findMany({ orderBy: { createdAt: "desc" }, take: 30 }),
+      db.menuItem.findMany({
+        where: { baranProductId: { not: null } },
+        orderBy: { baranSyncedAt: "desc" },
+        take: 60,
+        include: { category: { select: { name: true } } },
+      }),
+    ]);
+    const maxSync = maxSyncR.status === "fulfilled" ? maxSyncR.value : null;
+    const logs = logsR.status === "fulfilled" ? logsR.value : [];
+    const items = itemsR.status === "fulfilled" ? itemsR.value : [];
+    if (maxSyncR.status === "rejected" || logsR.status === "rejected" || itemsR.status === "rejected") {
+      console.warn("[baran] admin GET: partial data — a data query failed (incompatible column value?)");
+    }
 
     return ok({
       settings,
@@ -113,7 +127,7 @@ export async function GET() {
         imagesReceived,
         ordersPending,
         ordersSent,
-        lastProductSyncAt: maxSync._max.baranSyncedAt?.toISOString() ?? null,
+        lastProductSyncAt: maxSync?._max.baranSyncedAt?.toISOString() ?? null,
       },
       health: computeHealth(settings, logs),
       logs: logs.map((l) => ({

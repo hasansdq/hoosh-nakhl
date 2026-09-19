@@ -1402,3 +1402,27 @@ Stage Summary:
 - ✅ تست اتصال در هر سه حالت (فعال/غیرفعال/کلید-الزامی) رفتار صحیح و پیام‌های فارسی روشن دارد؛ AuditLog برای هر تست
 - ⚠️ مهم برای بهره‌بردار: این بخش (و خود تب باران) در کامیت‌های 5c810cd+ است — روی VPS فقط بعد از `cd /opt/nakhl && bash docker/update.sh` دیده می‌شود؛ نسخهٔ قدیمی VPS هیچ تب بارانی ندارد
 - پیشنهاد آینده: نمودار کوچک روند فراخوانی‌های باران (از BaranSyncLog)، هشدار proactive وقتی verdict=failing (اعلان در پنل)، و در صورت نیاز CustomersSEND/SendCoupons طبق بک‌لاگ
+
+---
+Task ID: docker-update-verify-1
+Agent: Z.ai Code (main)
+Task: بررسی مجدد کامل مسیر آپدیت داکری VPS از نظر حفظ دیتابیس و امنیت داده‌ها (درخواست کاربر قبل از آپدیت واقعی)
+
+Work Log:
+- **ممیزی زنجیرهٔ آپدیت:** update.sh (بک‌اپ → build → up -d، هرگز down -v) · compose (volume nakhl-data، loopback-only، cap_drop ALL، no-new-privileges، non-root) · entrypoint (secrets پایدار با chmod 600، مهاجرت forward-only، seed idempotent) · migrate.mjs (تراکنشی، tracking در _nakhl_migrations) · backup/restore (VACUUM INTO سازگار + صحت‌سنجی + .pre-restore) — همه با مستندات سازگار
+- **اثبات سازگاری tracking:** git history نشان داد _nakhl_migrations از اولین کیت داکر (de16641) با همین نام/رفتار بوده و migrate.mjs هرگز عوض نشده → دیتابیس VPS قطعاً tracking دارد؛ 0001 بدون IF NOT EXISTS است اما هرگز دوباره اجرا نمی‌شود
+- **شبیه‌سازی کامل «VPS قدیمی → آپدیت»:** دیتابیس با 0001+0002 ساخته شد + داده‌های زندهٔ واقعی (ادمین دلخواه rayan-vps-admin با رمز خودش، تغییر تنظیمات general، کاربر+آدرس+سفارش PAID با ۲ قلم، ویرایش قیمت/توضیح آیتم منو) → بوت نسخهٔ جدید: 0003 به‌سادگی اعمال شد، seed ادمین را skip کرد، **همهٔ ۲۳ بررسی داده حفظ شد** (ادمین/رمز/کاربر/سفارش/آیتم‌ها/تنظیمات/بدون تکرار) + PRAGMA integrity_check=ok + foreign_key_check خالی + ستون‌های باران قابل نوشتن
+- **Idempotency بوت دوم:** no-op کامل — همان شمارش‌ها (30/1/1/1/2)، بدون هیچ رکورد تکراری
+- **بک‌اپ/فاجعه/بازیابی:** VACUUM INTO (0.36MB) روی دیتابیس آپدیت‌شده → حذف کامل DB → restore → همهٔ داده‌ها + ادمین + ۳ مهاجرت برگشت، integrity ok
+- **بیلد standalone پروداکشن:** NAKHL_DOCKER_BUILD=1 → Compiled successfully؛ همهٔ روت‌های باران (admin/baran{,/test,/rotate-key,/resend-orders,/hide-manual} + ApiServiceBaran/[...method]) در خروجی حاضرند
+- **چیدمان دقیق ایمیج + بوت واقعی entrypoint:** standalone + static/public + اسکریپت‌ها/migrations/seed + runtime-deps پین‌شده جدا و merge (روش اثبات‌شدهٔ docker-audit-1) → بوت production روی :3100 با volume همان دیتابیس آپدیت‌شده؛ کلید notify تولید و در بوت بعدی restore شد
+- **E2E پروداکشن (VPS-after-update):** health db:up · صفحه 200 · منو 30 آیتم/۷ دسته (دادهٔ زنده) · **ورود با اعتبارنامهٔ قدیمی VPS موفق** · تب باران API · Ping بدون کلید 401 / با کلید 200+ok · تست اتصال ادمین = healthy (۴ گام pass، 4-18ms) · **ProductSEND واقعی با قرارداد کامل باران (GroupId/MainGroupId/SellPrice/ChangeType=0) → StatusId=1 «کالا ایجاد شد» → آیتم روی فروشگاه ظاهر شد (31 آیتم) → verdict=healthy** · دو فراخوانی ناقص قبلی → verdict=failing فوری (سلامت واقعی کار می‌کند) · کیل‌سوییچ پرداخت 403 · /emit بدون کلید 401 · admin بدون سشن 401 · هدرهای nosniff/XFO/Referrer-Policy · خاموشی graceful SIGTERM
+- **باگ واقعی از سیم پروداکشن کشف و رفع شد:** یک مقدار DateTime با فرمت غیر-ISO (دخالت خارجی/SQL خام) در baranSyncedAt کل GET /api/admin/baran را 500 می‌کرد → سه کوئری داده‌محور (maxSync/logs/items) حالا با Promise.allSettled مستقل اجرا می‌شوند؛ ردیف خراب فقط همان بخش را خالی می‌کند + console.warn — تست واقعی با دادهٔ خراب: endpoint همچنان 200، aggregate رد شد، warn لاگ شد
+- **اصلاح امنیتی backup.sh:** پوشهٔ backups میزبان (حاوی PII/هش رمزها/کلیدهای API) با umask پیش‌فرض world-readable بود → حالا chmod 700 پوشه + chmod 600 هر snapshot + یادداشت امنیتی در DOCKER-DEPLOY-FA.md (فضای مقصد ابری هم باید خصوصی باشد)
+- بازگرداندن dev stack (notify-service سوپروایزر → next dev خودکار بالا آمد) · صفحهٔ اصلی بدون خطای کنسول · lint صفر · tsc صفر
+
+Stage Summary:
+- ✅ آپدیت داکری VPS از هر دو منظر تأیید کامل: (۱) حفظ دیتابیس — با شبیه‌سازی واقعی old→new روی دیتابیس با داده‌های زنده، همهٔ رکوردها/ادمین/تنظیمات دست‌نخورده؛ migration 0003 صرفاً ستون nullable و جدول جدید اضافه می‌کند (۲) امنیت داده — اتصال فقط loopback پشت Apache، non-root + cap_drop ALL، کلیدها فقط در volume با 600، کیل‌سوییچ پرداخت فعال، fail-closed کلید notify، بک‌اپ‌های میزبان حالا 700/600
+- ✅ زنجیرهٔ باران برای اولین بار در حالت standalone پروداکشن E2E شد (بیلد + بوت + ProductSEND واقعی + سلامت + تست اتصال) — پیش از این فقط dev تست شده بود
+- ⚠️ نکتهٔ عملیاتی برای کاربر: آپدیت = جایگزینی فایل‌ها + `bash docker/update.sh`؛ قبل از آپدیت دستی `bash docker/backup.sh` اختیاری است (update.sh خودش می‌گیرد)؛ هرگز `down -v` نکنید؛ در صورت مشکل `bash docker/restore.sh backups/<آخرین>` برگردان
+- پیشنهاد آینده: نگه‌داشتن snapshot خارج از سرور (فضای خصوصی)، تست دوره‌ای restore
