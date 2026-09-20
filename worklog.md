@@ -1498,3 +1498,28 @@ Stage Summary:
 - کدبیس آمادهٔ دیپلوی است: نسخهٔ 8e0ddf1+ هر دو خطای قبلی بیلد VPS (proxyconnect و typecheck) را رفع کرده
 - دستور کلیدی برای وضعیت فعلی کاربر: جایگزینی کد با نسخهٔ جدید → bash docker/deploy.sh (اولین استقرار موفق)؛ برای دفعات بعد: bash docker/update.sh
 - مرجع کامل مستندات: DOCKER-DEPLOY-FA.md
+
+---
+Task ID: sandbox-admin-login-fix-1
+Agent: Z.ai Code (main)
+Task: کاربر گزارش کرد «نمی‌توانم در پیشنمایش سندباکس وارد پنل مدیریت شوم — نام کاربری یا رمز اشتباه است» — بررسی و اصلاح
+
+Work Log:
+- dev.log بررسی شد: چندین POST /api/admin/login → 401 (تلاش‌های واقعی کاربر رد شده بودند)
+- دیتابیس D1 محلی سندباکس مستقیماً خوانده شد (bun:sqlite روی .wrangler/state/v3/d1/miniflare-D1DatabaseObject/82898e5c….sqlite): **جدول AdminUser کاملاً خالی** (۰ ادمین، ۰ سشن) — داده‌ها در ریست سندباکس پاک شده بودند؛ جداول منو/دسته/کوپن/تنظیمات سالم بودند (۷ دسته، ۳۰ آیتم، ۳ کوپن، ۴ تنظیم)
+- ریشه: bootstrap ادمین هرگز بعد از ریست اجرا نشده بود
+- فیکس (طبق روش مستند در worklog قبلی): `ADMIN_USERNAME=rayantech ADMIN_PASSWORD='Nakhl-Admin-2026!' bun run scripts/bootstrap-admin-d1.ts --local` → «ادمین ساخته شد (local): rayantech»
+- تأیید در دیتابیس: ردیف admin-6951536f40cbc320 با هش scrypt طول ۱۶۱ ثبت شد
+- تأیید API: POST /api/admin/login → 200 + کوکی سشن؛ GET /api/admin/me با کوکی → 200
+- تأیید مرورگر (agent-browser): فرم /nk-admin پر و submit شد → داشبورد کامل رندر شد (banner «مدیر رستوران نخل (@rayantech)»، تمام آیتم‌های ناوبری، آمار داشبورد)
+- نکتهٔ کشف‌شده حین QA: status «اتصال لحظه‌ای قطع است» فقط وقتی رخ می‌دهد که صفحه مستقیم از 127.0.0.1:3000 (بدون گیت‌وی) باز شود — چون io("/?XTransformPort=3003") به same-origin می‌رود و Next.js خودش (نه گیت‌وی) پاسخ می‌دهد. از مسیر صحیح گیت‌وی (:81 = همان پیشنمایش کاربر): اتصال برقرار و «اتصال زنده فعال است» + لاگ notify-service: admin joined (admins online: 1)
+- تست‌های گیت‌وی: polling handshake 200 + WebSocket upgrade 101 از طریق ?XTransformPort=3003؛ کلید notify از wrangler.jsonc (dev-preview-nakhl-…) در هر دو سمت یکسان
+- تأیید نهایی: /api/health از گیت‌وی → {"ok":true,"db":"up"}؛ /api/menu با ۷ دسته/۳۰ آیتم؛ صفر خطای کنسول مرورگر
+- نکتهٔ لاگ: سوپروایزر notify-service دو بار next dev را ری‌استارت کرده بود (کامپایل‌های سنگین اولیه) — رفتار طبیعی self-healing، بدون خطا
+
+Stage Summary:
+- ✅ مشکل ورود ادمین رفع شد: علت = جدول AdminUser خالی بعد از ریست سندباکس؛ فیکس = bootstrap ادمین با اعتبارنامهٔ استاندارد سندباکس
+- ✅ اعتبارنامهٔ ورود پنل در پیشنمایش: rayantech / Nakhl-Admin-2026!
+- ✅ اتصال زندهٔ اعلان‌ها از مسیر پیشنمایش (گیت‌وی) کاملاً سالم: socket.io → admin-join → room admins
+- ℹ️ آموزش برای آینده: بعد از هر ریست سندباکس که D1 state را پاک کند، فقط `bun run scripts/bootstrap-admin-d1.ts --local` با env های بالا کافی است (منو/تنظیمات از seed موجود می‌مانند چون در همان state file هستند — در این ریست فقط جداول session-like خالی شده بودند به‌علاوهٔ AdminUser)
+- ⚠️ «قطع» در هدر پنل فقط از باز کردن مستقیم 127.0.0.1:3000 (دور زدن گیت‌وی) ناشی می‌شود — برای کاربر پیشنمایش همیشه از گیت‌وی می‌آید و سالم است
