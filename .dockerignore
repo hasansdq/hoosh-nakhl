@@ -22,6 +22,10 @@ node_modules
 .next
 tsconfig.tsbuildinfo
 next-env.d.ts
+# prisma generated client — postinstall regenerates it inside the image
+# (bun install layer); a stale local copy must NEVER enter the context and
+# overwrite the fresh one (the Dockerfile asserts its presence after COPY).
+src/generated
 
 # --- sandbox-only services & platform scripts ---
 mini-services
