@@ -29,21 +29,24 @@ const PORT = 3003; // hardcoded — the Caddy gateway expects this port
 
 /**
  * Shared secret resolution — keeps this service in sync with the Next backend
- * (which reads the same value through the Miniflare dev context):
+ * (which reads the same value from the repo .env through Next.js env loading):
  *   1. ADMIN_NOTIFY_KEY env (explicit),
- *   2. the `vars.ADMIN_NOTIFY_KEY` value in the repo's wrangler.jsonc — the
- *      SAME key the local Miniflare dev bindings expose to Next dev.
+ *   2. the `ADMIN_NOTIFY_KEY=` line in the repo's .env — the SAME file
+ *      `next dev` loads, so both sides always share one key.
  * Without (2), sandbox-dev emits were silently rejected (key mismatch).
  */
 function resolveAdminKey(): string {
   if (process.env.ADMIN_NOTIFY_KEY) return process.env.ADMIN_NOTIFY_KEY;
   try {
-    // ../../wrangler.jsonc relative to mini-services/notify-service/index.ts
-    const wrangler = readFileSync(new URL("../../wrangler.jsonc", import.meta.url), "utf8");
-    const m = wrangler.match(/"ADMIN_NOTIFY_KEY"\s*:\s*"([^"]+)"/);
-    if (m && m[1].length >= 16) return m[1];
+    // ../../.env relative to mini-services/notify-service/index.ts
+    const envFile = readFileSync(new URL("../../.env", import.meta.url), "utf8");
+    const m = envFile.match(/^ADMIN_NOTIFY_KEY\s*=\s*(.+)$/m);
+    if (m) {
+      const key = m[1].trim().replace(/^["']|["']$/g, "");
+      if (key.length >= 16) return key;
+    }
   } catch {
-    /* no wrangler.jsonc next to the service — fall through */
+    /* no .env next to the service — fall through */
   }
   return "nakhl-notify-2024"; // legacy sandbox default (localhost-only dev)
 }
@@ -223,7 +226,7 @@ httpServer.on("request", (req: IncomingMessage, res: ServerResponse) => {
 httpServer.listen(PORT, () => {
   console.log(`[notify] service listening on port ${PORT} (socket.io path "/")`);
   console.log(
-    `[notify] POST /emit ready — key source: ${process.env.ADMIN_NOTIFY_KEY ? "ADMIN_NOTIFY_KEY env" : ADMIN_KEY === "nakhl-notify-2024" ? "legacy default (dev only)" : "wrangler.jsonc vars (dev-preview)"}`,
+    `[notify] POST /emit ready — key source: ${process.env.ADMIN_NOTIFY_KEY ? "ADMIN_NOTIFY_KEY env" : ADMIN_KEY === "nakhl-notify-2024" ? "legacy default (dev only)" : "repo .env (dev-preview)"}`,
   );
 });
 

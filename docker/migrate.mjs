@@ -3,9 +3,9 @@
  * Nakhl Restaurant — SQLite migration runner (Docker / VPS)
  * ---------------------------------------------------------
  * Applies the SQL migrations in $NAKHL_MIGRATIONS_DIR (defaults to
- * /app/migrations — the same files Cloudflare D1 applies via
- * `wrangler d1 migrations apply`) to the local SQLite database at
- * $NAKHL_SQLITE_PATH, tracking applied files in `_nakhl_migrations`.
+ * /app/migrations) to the local SQLite database at $NAKHL_SQLITE_PATH,
+ * tracking applied files in `_nakhl_migrations`. The same runner also
+ * serves local development through scripts/dev-db.mjs (`bun run db:setup`).
  *
  * Safety contract (the reason this file exists):
  *  • ONLY forward, additive migrations — never drops or rewrites data.

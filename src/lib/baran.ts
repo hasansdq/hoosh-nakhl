@@ -30,8 +30,8 @@ import { saveImageUpload, deleteUploadByUrl } from "@/lib/uploads";
  *  • Factor numbers are assigned lazily and stay stable across polls, so a
  *    Baran crash between fetch and ack is harmless (same numbers re-fetched).
  *
- * Dual-runtime safe (Cloudflare Workers + Docker/Node): atob/File/crypto are
- * used only through web-standard globals available on both runtimes.
+ * Node-safe: atob/File/crypto are used only through web-standard globals
+ * (available on Node 22, which the Docker runtime image runs).
  */
 
 // ============ C# wire types (exact PascalCase contract) ============

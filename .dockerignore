@@ -15,15 +15,11 @@
 .env
 .env.*
 !.env.example
-.dev.vars
-.dev.vars.*
 docker/env.example
 
 # --- dependency & build artifacts (rebuilt inside the image) ---
 node_modules
 .next
-.open-next
-.wrangler
 tsconfig.tsbuildinfo
 next-env.d.ts
 
@@ -53,10 +49,6 @@ upload
 scripts
 Caddyfile
 Caddyfile.prod
-wrangler.jsonc
-wrangler.toml
-open-next.config.ts
-.dev.vars.example
 .dockerignore
 docker-compose.yml
 Dockerfile

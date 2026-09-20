@@ -4,7 +4,7 @@
 --   (nullable = fully backward compatible; unique indexes allow NULLs).
 -- • New tables: BaranSyncLog (per-call API report) and BaranAsset
 --   (product pictures received via SENDPics, matched by file name).
--- Applies identically on Cloudflare D1 (wrangler d1 migrations apply)
+-- Applied by docker/migrate.mjs (container boot) and scripts/dev-db.mjs (dev)
 -- and Docker/VPS (docker/migrate.mjs — forward-only, transactional).
 
 -- MenuItem — link to Baran product (ProductId)

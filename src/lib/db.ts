@@ -1,30 +1,35 @@
 import "server-only";
 import { PrismaClient } from "@/generated/prisma/client";
-import { getCloudflareEnv, isWorkersRuntime } from "@/lib/cf";
 
 /**
- * Nakhl Restaurant — Prisma client (dual deployment runtime)
+ * Nakhl Restaurant — Prisma client (Docker / VPS deployment)
  * ----------------------------------------------------------
  * The generated client (prisma schema `runtime = "workerd"`) is fully
  * engineless: queries are compiled by an inlined WebAssembly compiler and
- * executed through a driver adapter. The backend is selected per runtime:
+ * executed through the `@prisma/adapter-libsql` driver adapter on a local
+ * SQLite file. (Despite its name, Prisma's "workerd" runtime is simply the
+ * engineless WASM build target — it runs on plain Node 22, which is exactly
+ * what the Docker runtime image and local `next dev` use.)
  *
- *  • Cloudflare Workers (and local `next dev` via Miniflare): the adapter is
- *    `@prisma/adapter-d1`, wired to the `DB` binding declared in wrangler.jsonc.
+ * Database file location:
+ *  • Docker / VPS (Node standalone): `NAKHL_SQLITE_PATH` is set by the
+ *    Dockerfile/entrypoint — the file lives on the persistent `nakhl-data`
+ *    volume (/app/data/nakhl.db) and survives redeploys.
+ *  • Local `next dev`: falls back to `db/nakhl.db` in the repo (gitignored;
+ *    create/migrate it once with `bun run db:setup`).
  *
- *  • Docker / VPS (Node standalone): when `NAKHL_SQLITE_PATH` is set (set by
- *    docker/entrypoint.sh — the file lives on the persistent `nakhl-data`
- *    volume), the adapter is `@prisma/adapter-libsql` over a local SQLite
- *    file. Both adapter modules are loaded through non-literal, bundler-
- *    excluded dynamic imports so the Cloudflare worker bundle never includes
- *    them (same proven pattern as src/lib/ai/index.ts).
- *
- * Because module top-level code cannot `await` the async Cloudflare context,
- * `db` is a lazily-initialized proxy: any method call resolves the real
- * PrismaClient first (memoized), then forwards the call. All Prisma
- * operations return Promises, so this is fully transparent to callers —
- * `await db.user.findMany()` and `await db.$queryRaw\`...\`` behave exactly
- * like a direct client.
+ * Loading strategy for the adapter (matters for the bundlers):
+ *  • Turbopack compiles non-literal `import(expr)` in server code into a
+ *    throwing "Cannot find module as expression is too dynamic" stub, and
+ *    it also tracks `createRequire` obtained through a destructured
+ *    `await import("node:module")` — both approaches get stubbed.
+ *  • `process.getBuiltinModule("module")` is a plain method call: Turbopack
+ *    leaves the whole chain untouched, and Next's output-file tracing does
+ *    not fall back to whole-repo globs. On Node (≥22.3, our node:22 image)
+ *    it resolves the real module at runtime and the adapter — together with
+ *    its native @libsql/client dependency — is loaded straight from
+ *    node_modules, exactly what the Dockerfile's runtime-deps merge step
+ *    installs into the standalone bundle.
  */
 
 type AnyCallable = (...args: any[]) => any;
@@ -34,56 +39,47 @@ const globalForPrisma = globalThis as unknown as {
 const state = (globalForPrisma.__nakhlDbState ??= { client: null, init: null });
 
 async function createPrismaClient(): Promise<PrismaClient> {
-  const env = await getCloudflareEnv();
-  const d1 = env?.DB;
+  // Explicit path (Docker volume) → repo-relative dev default (db/nakhl.db).
+  const sqlitePath = process.env.NAKHL_SQLITE_PATH || "db/nakhl.db";
 
-  if (d1) {
-    const { PrismaD1 } = await import("@prisma/adapter-d1");
-    return new PrismaClient({ adapter: new PrismaD1(d1) });
+  const nodeModule = process.getBuiltinModule?.("module") as
+    | { createRequire?: (url: string) => NodeRequire }
+    | undefined;
+  const nodeRequire = nodeModule?.createRequire?.(import.meta.url);
+  if (!nodeRequire) {
+    throw new Error("Node runtime without process.getBuiltinModule — use the node:22 Docker image");
   }
+  const adapterModuleId = ["@prisma/adapter-", "libsql"].join("");
+  const { PrismaLibSQL } = nodeRequire(adapterModuleId) as typeof import("@prisma/adapter-libsql");
+  const client = new PrismaClient({ adapter: new PrismaLibSQL({ url: `file:${sqlitePath}` }) });
 
-  // ---- Docker / VPS (Node standalone) — local SQLite via libsql ----------
-  // The adapter creates the underlying @libsql/client connection itself
-  // from this config; the SQLite file lives on the persistent data volume.
-  //
-  // Loading strategy (matters for BOTH deployment targets):
-  //  • Turbopack compiles non-literal `import(expr)` in server code into a
-  //    throwing "Cannot find module as expression is too dynamic" stub, and
-  //    it also tracks `createRequire` obtained through a destructured
-  //    `await import("node:module")` — both approaches get stubbed.
-  //  • `process.getBuiltinModule("module")` is a plain method call: Turbopack
-  //    leaves the whole chain untouched (verified with a live build probe),
-  //    OpenNext's esbuild sees nothing resolvable, and the file tracer does
-  //    not fall back to whole-repo globs. On Node (≥22.3, our node:22 image)
-  //    it resolves the real module at runtime; on workerd the branch is
-  //    unreachable (guards above) so it is never evaluated.
-  const sqlitePath = process.env.NAKHL_SQLITE_PATH;
-  if (sqlitePath && !isWorkersRuntime()) {
-    const nodeModule = process.getBuiltinModule?.("module") as
-      | { createRequire?: (url: string) => NodeRequire }
-      | undefined;
-    const nodeRequire = nodeModule?.createRequire?.(import.meta.url);
-    if (!nodeRequire) {
-      throw new Error("Node runtime without process.getBuiltinModule — use the node:22 Docker image");
-    }
-    const adapterModuleId = ["@prisma/adapter-", "libsql"].join("");
-    const { PrismaLibSQL } = nodeRequire(adapterModuleId) as typeof import("@prisma/adapter-libsql");
-    return new PrismaClient({ adapter: new PrismaLibSQL({ url: `file:${sqlitePath}` }) });
+  // Warm the connection (opens the SQLite file) with one retry. During
+  // parallel first-compiles in `next dev`, several routes can race the very
+  // first file open and one transiently fails — a single retry absorbs it.
+  // Production (single process, migrations finish before the server starts)
+  // never hits this; the warm-up costs one sub-millisecond local SELECT.
+  try {
+    await client.$queryRaw`SELECT 1`;
+  } catch {
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    await client.$queryRaw`SELECT 1`;
   }
-
-  throw new Error(
-    "No database backend available. Cloudflare deploys need the D1 binding «DB» " +
-      "(wrangler.jsonc d1_databases); Docker/VPS deploys need NAKHL_SQLITE_PATH " +
-      "(set automatically by docker/entrypoint.sh).",
-  );
+  return client;
 }
 
 function getClient(): Promise<PrismaClient> {
   if (state.client) return Promise.resolve(state.client);
-  state.init ??= createPrismaClient().then((client) => {
-    state.client = client;
-    return client;
-  });
+  state.init ??= createPrismaClient().then(
+    (client) => {
+      state.client = client;
+      return client;
+    },
+    (error) => {
+      // a failed init must not be memoized — the next call retries
+      state.init = null;
+      throw error;
+    },
+  );
   return state.init;
 }
 

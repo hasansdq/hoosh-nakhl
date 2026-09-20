@@ -24,7 +24,6 @@
 # Stage 2 «runner»   — node:22-slim (Debian): non-root, healthchecked,
 #                      forward-only migrations + idempotent seed at boot
 #                      (docker/entrypoint.sh), data on the nakhl-data volume.
-#
 # Ports: the app listens on container port 3000 and is published to
 # 127.0.0.1:8080 (host) by docker-compose.yml — DirectAdmin's Apache owns
 #  ports 80/443 on the VPS and reverse-proxies to this container.
@@ -44,9 +43,9 @@ RUN bun install --frozen-lockfile
 # application sources (.dockerignore keeps node_modules/.next/.git/… out)
 COPY . .
 
-# Prisma client — engineless "workerd" build (WASM query compiler): the very
-# same generated client runs on Cloudflare workerd AND on Node (next dev and
-# this standalone server). Native .so engine files are stripped defensively.
+# Prisma client — engineless WASM build (the schema's `runtime = "workerd"`
+# is Prisma's engineless target: no Rust engine binary, runs on plain Node 22).
+# Native .so engine files are stripped defensively.
 RUN bunx prisma generate && rm -f src/generated/prisma/*.so.node
 
 # Build-time public env — the browser bundle connects to socket.io on the

@@ -1,23 +1,17 @@
 import "server-only";
 
 /**
- * Nakhl Restaurant — filesystem storage backend for uploads (Docker / VPS)
+ * Nakhl Restaurant — filesystem storage backend for uploads
  * ----------------------------------------------------------------------
- * Mirror of the R2 backend for the Node deployment target: uploaded images
- * are written to a directory on the persistent Docker volume
+ * Uploaded images are written to a directory on the persistent Docker volume
  * (`NAKHL_UPLOADS_DIR`, set by docker/entrypoint.sh → /app/data/uploads) and
- * served by the same `/f/[...key]` route.
+ * served by the same `/f/[...key]` route. Local `next dev` falls back to
+ * `db/uploads` inside the repo (gitignored) so the admin panel's upload
+ * features work out of the box.
  *
- * Module-safety for the Cloudflare build: this file IS statically importable
- * from server code (and therefore present in the worker bundle), but every
- * Node built-in it needs is loaded through a non-literal, bundler-excluded
- * dynamic import (the proven src/lib/ai/index.ts pattern) — nothing Node-
- * specific is evaluated at import time, and none of these code paths ever
- * execute on workerd (the storage selector in ./index.ts picks R2 there).
- *
- * Keys follow the exact R2 naming scheme (`food|avatar|general-<uuid>.<ext>`)
- * and are validated against a strict regex before touching the filesystem,
- * so path traversal is impossible by construction.
+ * Keys follow the naming scheme (`food|avatar|general-<uuid>.<ext>`) and are
+ * validated against a strict regex before touching the filesystem, so path
+ * traversal is impossible by construction.
  */
 
 /** Valid storage key — one flat directory, UUID filename, fixed extensions. */
@@ -37,28 +31,18 @@ type NodeFsPromises = typeof import("node:fs/promises");
 /**
  * Lazily load `node:fs/promises`.
  *
- * A LITERAL `node:` builtin specifier is the one form that every tool in
- * both deployment pipelines passes through untouched: Turbopack emits it as
- * a native dynamic import (never a stub), esbuild cannot resolve the `node:`
- * scheme for the Workers bundle, and the file tracer recognizes builtins
- * (no whole-repo tracing fallback). Executed on the Node runtime only — on
- * workerd the storage selector in ./index.ts always picks R2 instead.
+ * A LITERAL `node:` builtin specifier is the one form that every bundler in
+ * the pipeline passes through untouched: Turbopack emits it as a native
+ * dynamic import (never a stub), and the output-file tracer recognizes
+ * builtins (no whole-repo tracing fallback).
  */
 async function nodeFs(): Promise<NodeFsPromises> {
   return import("node:fs/promises");
 }
 
-/** True when the Node filesystem backend is configured (env var present). */
-export function fsUploadsConfigured(): boolean {
-  return typeof process.env.NAKHL_UPLOADS_DIR === "string" && process.env.NAKHL_UPLOADS_DIR !== "";
-}
-
+/** Uploads root: explicit env (Docker volume) → repo dev default. */
 function uploadsDir(): string {
-  const dir = process.env.NAKHL_UPLOADS_DIR;
-  if (!dir) {
-    throw new Error("NAKHL_UPLOADS_DIR is not set — filesystem uploads backend is unavailable");
-  }
-  return dir.replace(/\/+$/, "");
+  return (process.env.NAKHL_UPLOADS_DIR || "db/uploads").replace(/\/+$/, "");
 }
 
 /** Key → absolute path (or null when the key fails validation). */

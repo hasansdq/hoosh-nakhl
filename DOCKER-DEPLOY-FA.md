@@ -316,7 +316,7 @@ docker compose up -d           # بازسازی mapping
   پیکربندی فقط از محیط کانتینر (env_file) می‌آید. کلید تولیدشده در volume (chmod 600) می‌ماند.
 - **دیتابیس جدا از ایمیج:** SQLite در volume؛ حتی `docker rm` + بیلد مجدد داده‌ها را حفظ می‌کند.
 - **مهاجرت‌های تراکنشی و forward-only:** فایل مهاجرت شکست‌خورده کل بوت را متوقف می‌کند (نه نیمه‌کاره).
-- **رمزها با scrypt** هش می‌شوند و فقط هش ذخیره می‌شود (فرمت یکسان با مسیر Cloudflare).
+- **رمزها با scrypt** هش می‌شوند و فقط هش ذخیره می‌شود.
 - **هیچ credential در ریپو نیست:** seed ها بدون ادمین/رمز (ساخت ادمین فقط از env در اولین بوت)؛
   تاریخچهٔ git هم از credential ها پاک‌سازی شده است.
 
@@ -430,24 +430,29 @@ docker pull docker.arvancloud.ir/library/node:22-slim \
 
 ## ۱۱) مرجع فنی (برای توسعه‌دهندگان)
 
-### دو مسیر دیپلوی، یک کد
+### معماری تک‌مسیره (Docker / VPS)
 
-| | **Docker / VPS (این سند)** | **Cloudflare Workers** (سند `CLOUDFLARE-DEPLOY-FA.md`) |
-|---|---|---|
-| بیلد | `NAKHL_DOCKER_BUILD=1 next build` → `.next/standalone` | `bun run cf:build` → `.open-next/worker.js` |
-| رانتایم | Node 22 (ایمیج) | workerd |
-| دیتابیس | SQLite (libsql) در volume — `NAKHL_SQLITE_PATH` | D1 binding |
-| آپلود | فایل‌سیستم volume — `NAKHL_UPLOADS_DIR` (`/f/<key>` یکسان) | R2 bucket (`/f/<key>` یکسان) |
-| Real-time | socket.io در-پروسس روی `/api/ws` + `POST /emit` | Durable Object NakhlRealtime |
-| انتخاب بک‌اند | `src/lib/db.ts` و `src/lib/uploads/index.ts` به‌صورت رانتایم بین دو بک‌اند تصمیم می‌گیرند | (همان فایل‌ها) |
+| لایه | پیاده‌سازی |
+|---|---|
+| بیلد | `NAKHL_DOCKER_BUILD=1 next build` → `.next/standalone` (ایمیج چندمرحله‌ای) |
+| رانتایم | Node 22 (ایمیج node:22-slim، اجرا بدون root) |
+| دیتابیس | SQLite (libsql) در volume پایدار — `NAKHL_SQLITE_PATH` |
+| آپلود | فایل‌سیستم volume — `NAKHL_UPLOADS_DIR` (`/f/<key>`) |
+| Real-time | socket.io در-پروسس روی `/api/ws` + `POST /emit` (docker/app-server.js) |
+| dev لوکال | `bun run db:setup` (SQLite در db/nakhl.db) + سرویس notify سندباکس روی پورت 3003 |
+
+> تاریخچه: نسخه‌های قدیمی این پروژه یک مسیر دیپلوی دوم روی Cloudflare Workers
+> (D1/R2/Durable Object) هم داشتند؛ طبق تصمیم پروژه آن مسیر به‌طور کامل حذف شد و
+> کد اکنون فقط برای استقرار Docker/VPS ساخته می‌شود.
 
 ### چرا `process.getBuiltinModule`؟
 
-سه لایهٔ باندلر (Turbopack → esbuild/OpenNext → wrangler) هر مسیر استاتیک ایمپورت Node را
-دنبال می‌کنند یا stub می‌کنند. الگوی `process.getBuiltinModule("module")` + `createRequire`
-یک فراخوانی متد ساده است که همهٔ باندلرها از آن عبور می‌دهند؛ در نتیجه کد libsql/z-ai
-**از باندل Cloudflare حذف شد** (کارگر از ۳.۴۲MB به **۲.۶۴MB gzip** رسید — زیر سقف پلن رایگان)
-و در داکر از node_modules ایمیج لود می‌شود.
+Turbopack هر مسیر استاتیک ایمپورت Node را دنبال می‌کند یا stub می‌کند و
+`createRequire` از طریق `await import("node:module")` هم ردیابی می‌شود. الگوی
+`process.getBuiltinModule("module")` + `createRequire` یک فراخوانی متد ساده است که
+باندلر از آن عبور می‌دهد؛ در نتیجه کد libsql/z-ai در داکر از node_modules ایمیج
+لود می‌شود (همان‌هایی که مرحلهٔ runtime-deps در standalone کپی می‌کند) و
+output-file tracing هم به whole-repo glob نمی‌رسد.
 
 ### فایل‌های کلیدی
 
@@ -475,7 +480,7 @@ docker/env.example             مرجع .env
 عضویت ادمین با کلید · دریافت broadcast «order:new-paid» · جریان کامل مشتری
 (OTP→ثبت‌نام→آدرس→سفارش→پرداخت شبیه‌سازی→اعلان) · خاموشی graceful ·
 **ری‌دیپلوی: مهاجرت no-op + حفظ ادمین/تنظیمات/CMS بدون تک‌تکرار** · فاجعه+restore کامل ·
-و بیلد سبز Cloudflare با باندل سبک‌تر از قبل.
+و رگرسیون کامل عملیاتروزمره بدون خطا.
 
 **دور دوم (docker-2 — سخت‌سازی امنیتی، ۸۱ آزمون سبز):**
 
@@ -494,7 +499,7 @@ docker/env.example             مرجع .env
   پروفایل · پیگیری سفارش PAID)
 - **هاردنینگ کلید notify:** بدون کلید → کلید تصادفی گذرا (fail-closed) · کلید قدیمی قابل حدس → 401 ·
   **رفع باگ od که کلید ۶ کاراکتری می‌ساخت** · کلید persisted ۵۴ کاراکتری کار می‌کند
-- رگرسیون: typecheck صفر · lint صفر · cf:build سبز (کارگر سبک) · سه ری‌دیپلوی متوالی sim بدون از دست رفتن داده
+- رگرسیون: typecheck صفر · lint صفر · سه ری‌دیپلوی متوالی sim بدون از دست رفتن داده
 - مرورگر (dev سندباکس): صفحهٔ اصلی RTL کامل · افزودن به سبد (۱۸۵,۰۰۰ تومان) · پنل ادمین همهٔ تب‌ها ·
   **«اتصال زنده فعال است» از طریق گیت‌وی (رفع ناسازگاری کلید dev که realtime را خاموش‌قطع کرده بود)** ·
   صفر خطای کنسول
