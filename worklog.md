@@ -1523,3 +1523,41 @@ Stage Summary:
 - ✅ اتصال زندهٔ اعلان‌ها از مسیر پیشنمایش (گیت‌وی) کاملاً سالم: socket.io → admin-join → room admins
 - ℹ️ آموزش برای آینده: بعد از هر ریست سندباکس که D1 state را پاک کند، فقط `bun run scripts/bootstrap-admin-d1.ts --local` با env های بالا کافی است (منو/تنظیمات از seed موجود می‌مانند چون در همان state file هستند — در این ریست فقط جداول session-like خالی شده بودند به‌علاوهٔ AdminUser)
 - ⚠️ «قطع» در هدر پنل فقط از باز کردن مستقیم 127.0.0.1:3000 (دور زدن گیت‌وی) ناشی می‌شود — برای کاربر پیشنمایش همیشه از گیت‌وی می‌آید و سالم است
+
+---
+Task ID: remove-cloudflare-docker-only-1
+Agent: Z.ai Code (main)
+Task: درخواست کاربر: «هر چیزی که در مورد اتصال به کلاد فلر هست رو از پروژه حذف کن چون قرار نیست پروژه روی کلاد فلر بیاد بالا و قراره با داکر روی VPS دیپلوی بشه! پس هر چیزی که مربوط به کلاد فلر هست رو حذف کن و در عوض به طور کامل داکرایزش کن!»
+
+Work Log:
+- ممیزی کامل: grep سراسری getCloudflareEnv/cfVar/isWorkersRuntime/wrangler/opennextjs/adapter-d1/workers-types/NakhlRealtime/DurableObject/NEXT_PUBLIC_CF_BUILD/NEXT_PUBLIC_REALTIME_MODE → مصرف‌کنندگان فقط db.ts، notify.ts، uploads/index.ts، notify-key route + فایل‌های ورکر/کانفیگ
+- حذف فایل‌ها: wrangler.jsonc، src/worker.js، src/do/realtime.ts (کل src/do/)، src/app/api/ws/route.ts (روت مردهٔ CF — در داکر app-server.js مسیر /api/ws را سرو می‌کند)، open-next.config.ts، .dev.vars.example، CLOUDFLARE-DEPLOY-FA.md، scripts/bootstrap-admin-d1.ts، .zscripts/build.sh + start.sh + database-runtime-build.sh (خط لولهٔ قدیمی بسته‌بندی CF)، .wrangler/ (state محلی) — همه با git rm
+- حذف وابستگی‌ها از package.json + bun install: @opennextjs/cloudflare، @prisma/adapter-d1، wrangler، @cloudflare/workers-types (lockfile به‌روز شد؛ prisma generate مجدد با کامنت‌های جدید schema)
+- ری‌فکتور تک‌مسیره:
+  • src/lib/db.ts: فقط libsql adapter روی فایل SQLite — NAKHL_SQLITE_PATH (داکر: volume) یا پیش‌فرض dev «db/nakhl.db»؛ الگوی اثبات‌شدهٔ getBuiltinModule+createRequire حفظ شد
+  • src/lib/notify.ts: فقط POST /emit (داکر: در-پروسس app-server از NAKHL_NOTIFY_URL؛ dev: سرویس notify سندباکس)؛ قاعدهٔ fail-closed پروداکشن (NAKHL_SQLITE_PATH + کلید <۱۶ = skip) حفظ شد
+  • src/lib/uploads/: فقط fs (NAKHL_UPLOADS_DIR یا پیش‌فرض dev «db/uploads»)؛ fsUploadsConfigured حذف؛ R2 branch و type ها حذف
+  • src/lib/realtime.ts: فقط socket.io (io("/?XTransformPort=3003") در dev؛ io({path: NEXT_PUBLIC_SOCKET_PATH}) در بیلد داکر)؛ کلاس WebSocketRealtime حذف
+  • src/app/api/admin/notify-key: فقط process.env.ADMIN_NOTIFY_KEY
+  • next.config.ts: حذف initOpenNextCloudflareForDev و isCloudflareBuild و images.unoptimized مشروط
+- سوئیچ dev سندباکس از D1/Miniflare به SQLite محلی:
+  • scripts/dev-db.mjs جدید (bun run db:setup): همان docker/migrate.mjs + docker/seed.mjs با env های dev (NAKHL_SQLITE_PATH=db/nakhl.db، profile dev) — admin bootstrap از ADMIN_USERNAME/ADMIN_PASSWORD
+  • راه‌اندازی: bun run db:setup با rayantech/Nakhl-Admin-2026! → ۳ مهاجرت + سید + ادمین ✓ (دادهٔ D1 قبلی فقط منو/تنظیمات بود که از همان seed می‌آید؛ admin هم دوباره با همان اعتبارنامه ساخته شد)
+  • .env سندباکس: فقط ADMIN_NOTIFY_KEY=dev-preview-nakhl-3f8c21a9d74b6e05c2af417b (توجه: NAKHL_SQLITE_PATH عمداً در .env نیست چون docker-compose همان فایل را env_file کانتینر می‌کند)
+  • notify-service: resolveAdminKey حالا از repo .env می‌خواند (قبلاً wrangler.jsonc)؛ نکته: کلید فقط در ابتدای ماژول resolve می‌شود → بعد از تغییر .env حتماً ری‌استارت سرویس (با hot-reload alone کافی نیست)
+  • .zscripts/dev.sh: گام D1/wrangler → bun run db:setup (حیاتی برای boot بعدی سندباکس)
+- سخت‌سازی db.ts حین QA: خطاهای گذرای «Failed to connect» فقط در فاز کامپایل اولیهٔ route ها (race باز کردن فایل) → warm-up اتصال (SELECT 1) با یک retry + پاک‌سازی state.init ردشده؛ تست با rm -rf .next + ری‌استارت + ۵ endpoint همزمان حین کامپایل اولیه: همه 200 و صفر خطای جدید؛ hammer ۴۰ درخواست موازی: 40/40
+- مستندات/کامنت‌ها: DOCKER-DEPLOY-FA.md §11 تک‌مسیره + ردیف dev لوکال؛ Dockerfile (کامنت prisma workerd=engineless روی Node)؛ migrate.mjs، app-server.js، baran.ts، generate-seed-sql.ts، 0003_baran_sync.sql، .dockerignore، .gitignore، eslint.config.mjs، .env.example
+- تصمیم آگاهانه: `runtime = "workerd"` در schema.prisma حفظ شد — نام Prisma برای بیلد engineless (کامپایلر WASM بدون engine باینری) است که روی Node 22 اجرا می‌شود؛ بیلد داکر دوبار روی همین تنظیم کلین‌روم اثبات شده؛ تغییرش ریسک بی‌دلیل بود
+- تأیید نهایی: lint صفر ✓ tsc صفر ✓ بیلد پروداکشن NAKHL_DOCKER_BUILD=1 (Compiled successfully + 59/59 صفحه + standalone/server.js) ✓ dev stack بازگشت (health 200) ✓ مرورگر از گیت‌وی: سایت اصلی کامل، ورود ادمین rayantech 200، «اتصال زنده فعال است»، تب مدیریت منو (۳۰ آیتم/۷ دسته)، صفر خطای کنسول ✓
+- کامیت: b8750e3
+
+Stage Summary:
+- ✅ پروژه حالا تک‌مسیره Docker/VPS است: هیچ کد/کانفیگ/وابستگی/اسکریپت Cloudflare در repo باقی نیست (تنها اشاره‌ها: یادداشت تاریخی در DOCKER-DEPLOY-FA.md و عبارت «workerd» در schema.prisma که نام بیلد engineless پراسماست)
+- ✅ مسیر داکر دست‌نخورده و اثبات‌شده باقی ماند (Dockerfile/docker-compose/entrypoint/app-server/migrations/seed بدون تغییر منطقی؛ فقط کامنت) — بیلد پروداکشن روی همان env بیلدر داکر سبز شد
+- ✅ dev سندباکس حالا دقیقاً همان مسیر دیتای داکر را طی می‌کند (همان migrate/seed scripts، همان adapter) — یک کد، یک رفتار
+- ✅ اعتبارنامهٔ پنل در پیشنمایش: rayantech / Nakhl-Admin-2026! (بازسازی در db/nakhl.db)
+- ✅ برای VPS: دستورات استقرار هیچ تغییری نکرد — کد جدید را جایگزین کنید و bash docker/deploy.sh (اولین بوت) / bash docker/update.sh (آپدیت‌های بعدی)
+- ⚠️ نکتهٔ عملیاتی: اگر روزی .env ریشه عوض شد، سرویس notify سندباکس باید ری‌استارت شود (کلید در ابتدای ماژول خوانده می‌شود)
+- ⚠️ اگر کاربر تازه clone کند: bun install (postinstall=prisma generate) → bun run db:setup (با ADMIN_USERNAME/ADMIN_PASSWORD اختیاری) → bun run dev
+- بک‌لاگ قبلی حفظ شد: نمودار روند باران، هشدار proactive، Web Push، نظرات عمومی، CSV دسته‌ها
