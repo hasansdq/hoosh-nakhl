@@ -15,17 +15,17 @@
 .env
 .env.*
 !.env.example
+.dev.vars
+.dev.vars.*
 docker/env.example
 
 # --- dependency & build artifacts (rebuilt inside the image) ---
 node_modules
 .next
+.open-next
+.wrangler
 tsconfig.tsbuildinfo
 next-env.d.ts
-# prisma generated client — postinstall regenerates it inside the image
-# (bun install layer); a stale local copy must NEVER enter the context and
-# overwrite the fresh one (the Dockerfile asserts its presence after COPY).
-src/generated
 
 # --- sandbox-only services & platform scripts ---
 mini-services
@@ -53,6 +53,10 @@ upload
 scripts
 Caddyfile
 Caddyfile.prod
+wrangler.jsonc
+wrangler.toml
+open-next.config.ts
+.dev.vars.example
 .dockerignore
 docker-compose.yml
 Dockerfile

@@ -10,6 +10,13 @@ function isSettingsGroup(value: string): value is SettingsGroup {
   return (VALID_GROUPS as readonly string[]).includes(value);
 }
 
+/** بازهٔ زمانی ناهار/شام — پایان می‌تواند «24:00» باشد */
+const periodSchema = z.object({
+  enabled: z.boolean(),
+  open: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "ساعت شروع معتبر نیست (HH:MM)"),
+  close: z.string().regex(/^([01]\d|2[0-3]|24):[0-5]\d$/, "ساعت پایان معتبر نیست (HH:MM — 24:00 = نیمه‌شب)"),
+});
+
 const groupSchemas: Record<string, z.ZodTypeAny> = {
   ai: z.object({
     provider: z.enum(["zai", "openai", "openrouter"]).optional(),
@@ -60,7 +67,13 @@ const groupSchemas: Record<string, z.ZodTypeAny> = {
     address: z.string().max(300).optional(),
     phone: z.string().max(20).optional(),
     email: z.string().max(120).optional(),
-    workingHours: z.string().max(200).optional(),
+    workingHours: z.string().max(300).optional(), // مشتق می‌شود — فقط برای سازگاری پذیرفته می‌شود
+    businessHours: z
+      .object({
+        lunch: periodSchema,
+        dinner: periodSchema,
+      })
+      .optional(),
     taxPercent: z.number().min(0).max(30).optional(),
     deliveryFee: z.number().int().min(0).max(1_000_000).optional(),
     minOrderAmount: z.number().int().min(0).max(100_000_000).optional(),

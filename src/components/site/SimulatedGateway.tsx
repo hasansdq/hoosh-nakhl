@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useAppStore } from "@/lib/store";
+import { useCartStore } from "@/lib/cart-store";
 import { api } from "@/lib/client-api";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -98,6 +99,14 @@ export function SimulatedGateway() {
 
 export function PaymentResultBanner() {
   const { paymentResult, setPaymentResult, setView } = useAppStore();
+
+  // the payment attempt has concluded (success OR failure) → the mirrored
+  // chat items leave the classic cart; retry/edit continues inside Nakhl AI.
+  // Idempotent — safe with the chat's own mirror clearing.
+  useEffect(() => {
+    if (paymentResult) useCartStore.getState().clearChatItems();
+  }, [paymentResult]);
+
   if (!paymentResult) return null;
 
   const success = paymentResult.status === "success";

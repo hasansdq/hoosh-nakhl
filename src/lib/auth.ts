@@ -182,9 +182,21 @@ export function rateLimit(key: string, limit: number, windowMs: number): { ok: b
 }
 
 // ============ Client IP ============
-
+//
+// SECURITY: take the LAST entry of X-Forwarded-For, not the first.
+// Behind the production reverse proxy (DirectAdmin/Apache — and the sandbox
+// Caddy gateway) exactly ONE trusted hop appends the REAL client IP to the
+// header. A client can freely send its own forged "X-Forwarded-For: 1.2.3.4"
+// and the proxy then produces "1.2.3.4, <real-ip>" — reading the first
+// element would let attackers rotate fake IPs and defeat every IP-based
+// rate limit (OTP send/verify, admin login, order tracking). The last
+// element is the one written by our own trusted proxy and cannot be
+// spoofed from the outside in this architecture.
 export function getClientIp(req: Request): string {
   const fwd = req.headers.get("x-forwarded-for");
-  if (fwd) return fwd.split(",")[0].trim();
+  if (fwd) {
+    const parts = fwd.split(",").map((p) => p.trim()).filter(Boolean);
+    if (parts.length > 0) return parts[parts.length - 1];
+  }
   return req.headers.get("x-real-ip") || "unknown";
 }

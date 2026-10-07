@@ -31,6 +31,8 @@ export async function GET() {
         id: c.id,
         name: c.name,
         slug: c.slug,
+        icon: c.icon, // کلید آیکون lucide — توسط مدیریت منو قابل تنظیم است
+        dinnerOnly: c.dinnerOnly, // فقط شیفت شب — غذاهای این دسته فقط در سرویس شام قابل سفارش‌اند
         items: c.items.map((i) => ({
           id: i.id,
           name: i.name,
@@ -43,6 +45,7 @@ export async function GET() {
           isDrink: i.isDrink,
           isVegetarian: i.isVegetarian,
           isSpicy: i.isSpicy,
+          dinnerOnly: c.dinnerOnly || undefined,
           ingredients: i.ingredients,
           orderCount: i.orderCount,
           calories: i.calories,

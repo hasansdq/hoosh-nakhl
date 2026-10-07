@@ -1,12 +1,15 @@
 import { getStoredObject } from "@/lib/uploads";
 
 /**
- * GET /f/<object-key> — serve an uploaded image from the filesystem
- * storage backend (Docker volume via NAKHL_UPLOADS_DIR; db/uploads in dev).
+ * GET /f/<object-key> — serve an uploaded image from the active storage
+ * backend (Cloudflare R2 on Workers, filesystem volume on Docker/VPS).
  *
  * Upload URLs (`/f/food-<uuid>.webp` …) are stored in the database and
  * rendered by the UI. Object keys are immutable (UUID-based), so responses
  * carry `Cache-Control: immutable` for browser/CDN caching.
+ *
+ * In local development the same route reads from the Miniflare R2 bucket
+ * (persistent state in `.wrangler/state`) — one code path for every runtime.
  */
 
 const KEY_RE = /^(food|avatar|general)-[0-9a-f-]{36}\.(webp|jpg|png|gif|avif)$/i;

@@ -16,17 +16,22 @@ export interface CartItem {
 
 export type CartDeliveryMethod = "DELIVERY" | "PICKUP";
 
-/** ارسال همین حالا یا زمان‌بندی برای بعد (پیش‌سفارش) */
-export type CartScheduleMode = "ASAP" | "SCHEDULED";
+/** قلم سبد که از «هوش نخل» آینه شده — itemId مرجع تطبیق است */
+export interface ChatDraftItem {
+  itemId: string;
+  name: string;
+  price: number;
+  imageUrl?: string | null;
+  quantity: number;
+}
 
 interface CartState {
   items: CartItem[];
   deliveryMethod: CartDeliveryMethod;
   address: string;
   couponCode: string;
-  scheduleMode: CartScheduleMode;
-  /** ISO زمان تحویل پیش‌سفارش — فقط وقتی scheduleMode === "SCHEDULED" معتبر است */
-  scheduledFor: string | null;
+  /** آیتم‌هایی که هم‌اکنون از درفت هوش نخل آینه شده‌اند (برای حذف/به‌روزرسانی دقیق) */
+  chatItemIds: string[];
   addItem: (item: Omit<CartItem, "quantity">, quantity?: number) => void;
   incrementItem: (itemId: string) => void;
   decrementItem: (itemId: string) => void;
@@ -35,9 +40,14 @@ interface CartState {
   setDeliveryMethod: (method: CartDeliveryMethod) => void;
   setAddress: (address: string) => void;
   setCouponCode: (code: string) => void;
-  setScheduleMode: (mode: CartScheduleMode) => void;
-  setScheduledFor: (iso: string | null) => void;
   clearCart: () => void;
+  /** آینه‌سازی درفت هوش نخل در سبد اصلی سایت — اقلام قبلاً آینه‌شده که از درفت خارج شده‌اند حذف و اقلام تازه با تعداد authoritative سرور upsert می‌شوند */
+  syncChatDraft: (
+    items: ChatDraftItem[],
+    opts?: { deliveryMethod?: CartDeliveryMethod; address?: string; couponCode?: string }
+  ) => void;
+  /** حذف همهٔ اقلام آینه‌شده از سبد (پس از پرداخت/رهاکردن درگاه) بدون دست‌زدن به اقلام دستی کاربر */
+  clearChatItems: () => void;
 }
 
 const MAX_QTY_PER_ITEM = 30;
@@ -50,8 +60,7 @@ export const useCartStore = create<CartState>()(
       deliveryMethod: "DELIVERY",
       address: "",
       couponCode: "",
-      scheduleMode: "ASAP",
-      scheduledFor: null,
+      chatItemIds: [],
 
       addItem: (item, quantity = 1) =>
         set((state) => {
@@ -96,15 +105,55 @@ export const useCartStore = create<CartState>()(
 
       setCouponCode: (couponCode) => set({ couponCode: couponCode.trim().slice(0, 24) }),
 
-      // حالت ارسال: همین حالا / زمان‌بندی — در حالت ASAP زمان قبلی بی‌اعتبار می‌شود
-      setScheduleMode: (scheduleMode) =>
-        set(scheduleMode === "SCHEDULED" ? { scheduleMode } : { scheduleMode, scheduledFor: null }),
+      // after a successful order: clear items + coupon; keep address/delivery as convenience
+      clearCart: () => set({ items: [], couponCode: "", chatItemIds: [] }),
 
-      setScheduledFor: (scheduledFor) =>
-        set(scheduledFor ? { scheduledFor, scheduleMode: "SCHEDULED" } : { scheduledFor: null }),
+      // ---- AI-chat mirror: the classic cart always reflects the active chat draft ----
+      // Quantities are authoritative from the server draft; rows the user added
+      // manually are untouched (except same-item collisions, where the draft wins).
+      syncChatDraft: (draftItems, opts) =>
+        set((state) => {
+          if (draftItems.length === 0) {
+            // empty draft → drop everything that was mirrored, keep manual rows
+            return {
+              items: state.items.filter((i) => !state.chatItemIds.includes(i.itemId)),
+              chatItemIds: [],
+            };
+          }
+          const draftIds = new Set(draftItems.map((d) => d.itemId));
+          // previously-mirrored rows that left the draft are removed
+          const kept = state.items.filter(
+            (i) => !state.chatItemIds.includes(i.itemId) || draftIds.has(i.itemId)
+          );
+          const byId = new Map(kept.map((i) => [i.itemId, { ...i }]));
+          for (const d of draftItems) {
+            const existing = byId.get(d.itemId);
+            byId.set(d.itemId, {
+              itemId: d.itemId,
+              name: d.name,
+              price: d.price,
+              // preserve a real image when the row already exists (draft payload has none)
+              imageUrl: d.imageUrl ?? existing?.imageUrl ?? null,
+              quantity: Math.max(1, Math.min(MAX_QTY_PER_ITEM, d.quantity)),
+            });
+          }
+          return {
+            items: [...byId.values()],
+            chatItemIds: [...draftIds],
+            ...(opts?.deliveryMethod === "DELIVERY" || opts?.deliveryMethod === "PICKUP"
+              ? { deliveryMethod: opts.deliveryMethod }
+              : {}),
+            ...(opts?.address && opts.address.trim().length >= 10 ? { address: opts.address.trim().slice(0, 500) } : {}),
+            // only adopt a chat coupon — never wipe one the user typed in the cart
+            ...(opts?.couponCode ? { couponCode: opts.couponCode.trim().slice(0, 24) } : {}),
+          };
+        }),
 
-      // after a successful order: clear items + coupon + schedule; keep address/delivery as convenience
-      clearCart: () => set({ items: [], couponCode: "", scheduleMode: "ASAP", scheduledFor: null }),
+      clearChatItems: () =>
+        set((state) => ({
+          items: state.items.filter((i) => !state.chatItemIds.includes(i.itemId)),
+          chatItemIds: [],
+        })),
     }),
     {
       name: "nakhl-cart",

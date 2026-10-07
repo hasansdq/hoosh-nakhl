@@ -1,0 +1,39 @@
+name: Docker validation
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  docker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build production image
+        run: docker build -t nakhl-validation .
+      - name: Verify database upgrade in production image
+        run: docker run --rm --entrypoint node nakhl-validation scripts/upgrade-test.mjs
+      - name: Verify atomic migration completion and restart
+        run: docker run --rm --entrypoint node nakhl-validation scripts/migration-test.mjs
+      - name: Start production app with temporary data
+        run: |
+          docker run -d --name nakhl-validation -p 127.0.0.1:8080:3000 \
+            -e NAKHL_SEED_PROFILE=prod -e ZARINPAL_FORCE_REAL=1 nakhl-validation
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent http://127.0.0.1:8080/api/health; then
+              exit 0
+            fi
+            sleep 2
+          done
+          exit 1
+      - name: Show logs and clean up temporary data
+        if: always()
+        run: |
+          docker logs nakhl-validation 2>/dev/null || true
+          docker rm -fv nakhl-validation 2>/dev/null || true

@@ -22,8 +22,7 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 import { Separator } from "@/components/ui/separator";
-import { formatToman, formatJalali, formatJalaliLong, toPersianDigits, timeAgo } from "@/lib/fa";
-import { formatScheduleFa } from "@/lib/schedule";
+import { formatToman, formatJalali, toPersianDigits, timeAgo } from "@/lib/fa";
 import {
   ShoppingBag,
   Search,
@@ -34,7 +33,6 @@ import {
   Store,
   RefreshCw,
   Clock,
-  CalendarClock,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -55,7 +53,6 @@ interface OrderRow {
   taxAmount: number;
   total: number;
   createdAt: string;
-  scheduledFor?: string | null;
   customer: string;
   customerPhone: string;
   items: { id: string; name: string; quantity: number; lineTotal: number }[];
@@ -235,23 +232,9 @@ export function OrdersManager({ initialFilter }: { initialFilter?: string } = {}
                       >
                         {o.statusLabel}
                       </span>
-                      {o.scheduledFor && (
-                        <span
-                          className="flex items-center gap-1 rounded-md bg-gold/15 px-1.5 py-0.5 text-[10px] font-bold text-gold-foreground"
-                          title={`زمان تحویل پیش‌سفارش: ${formatJalali(o.scheduledFor, true)}`}
-                        >
-                          <CalendarClock className="h-3 w-3" />
-                          پیش‌سفارش
-                        </span>
-                      )}
                     </div>
                     <div className="mt-0.5 text-[11px] text-muted-foreground">
                       {o.customer} • {toPersianDigits(o.items.length)} قلم • {timeAgo(o.createdAt)}
-                      {o.scheduledFor && (
-                        <span className="font-bold text-gold-foreground">
-                          {" "}• تحویل {formatScheduleFa(o.scheduledFor)}
-                        </span>
-                      )}
                     </div>
                   </div>
                 </div>
@@ -314,17 +297,6 @@ export function OrdersManager({ initialFilter }: { initialFilter?: string } = {}
                 {detail.address && (
                   <div className="rounded-xl border px-3 py-2.5 text-xs leading-6">
                     <b className="text-primary">آدرس تحویل:</b> {detail.address}
-                  </div>
-                )}
-                {detail.scheduledFor && (
-                  <div className="flex flex-wrap items-center gap-1.5 rounded-xl border border-gold/40 bg-gold/10 px-3 py-2.5 text-xs font-bold leading-6 text-gold-foreground">
-                    <CalendarClock className="h-4 w-4 shrink-0" />
-                    <span>
-                      زمان تحویل پیش‌سفارش: {formatScheduleFa(detail.scheduledFor)}
-                      <span className="font-semibold opacity-75">
-                        {" "}({formatJalaliLong(detail.scheduledFor)})
-                      </span>
-                    </span>
                   </div>
                 )}
                 {detail.note && (

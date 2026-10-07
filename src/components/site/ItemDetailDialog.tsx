@@ -18,6 +18,7 @@ import { Lightbox } from "@/components/site/Lightbox";
 import { useCartStore } from "@/lib/cart-store";
 import { api } from "@/lib/client-api";
 import { formatToman, toPersianDigits, timeAgo } from "@/lib/fa";
+import { dinnerOnlyMessage, isDinnerShiftNow } from "@/lib/hours";
 import { toast } from "sonner";
 import {
   Bot,
@@ -26,6 +27,7 @@ import {
   Flame,
   Leaf,
   MessageSquareText,
+  Moon,
   Send,
   ShoppingCart,
   Sparkles,
@@ -192,8 +194,15 @@ export function ItemDetailDialog({
   const user = useAppStore((s) => s.user);
   const setAuthOpen = useAppStore((s) => s.setAuthOpen);
   const recordRecentlyViewed = useAppStore((s) => s.recordRecentlyViewed);
+  const businessHours = useAppStore((s) => s.siteSettings.businessHours);
   const addItem = useCartStore((s) => s.addItem);
   const [added, setAdded] = useState(false);
+  // گیت «فقط شیفت شب» — خارج از سرویس شام، آیتم دسته‌های dinner-only قابل سفارش نیست
+  const [dinnerActive, setDinnerActive] = useState(() => isDinnerShiftNow(businessHours));
+  useEffect(() => {
+    const t = window.setInterval(() => setDinnerActive(isDinnerShiftNow(businessHours)), 60_000);
+    return () => window.clearInterval(t);
+  }, [businessHours]);
 
   const [reviewsData, setReviewsData] = useState<ReviewsResponse | null>(null);
   const [reviewsLoading, setReviewsLoading] = useState(false);
@@ -243,12 +252,18 @@ export function ItemDetailDialog({
   };
 
   const handleAddToCart = () => {
+    if (item.dinnerOnly && !dinnerActive) {
+      toast.info(dinnerOnlyMessage(businessHours));
+      return;
+    }
     if (!item.isAvailable) return;
     addItem({ itemId: item.id, name: item.name, price: item.price, imageUrl: item.imageUrl });
     setAdded(true);
     toast.success(`${item.name} به سبد خرید اضافه شد 🛒`);
     window.setTimeout(() => setAdded(false), 1300);
   };
+
+  const dinnerBlocked = !!item.dinnerOnly && !dinnerActive;
 
   const avgFromList =
     reviewsData && reviewsData.reviews.length > 0
@@ -301,6 +316,12 @@ export function ItemDetailDialog({
               <Badge className="rounded-full bg-red-600 px-2.5 text-[10px] font-bold text-white shadow-sm">
                 <Flame className="ml-1 h-3 w-3" />
                 تند
+              </Badge>
+            )}
+            {item.dinnerOnly && (
+              <Badge className="gap-1 rounded-full bg-slate-800 px-2.5 text-[10px] font-bold text-white shadow-sm dark:bg-slate-700" title="فقط در شیفت شب قابل سفارش است">
+                <Moon className="h-3 w-3" />
+                فقط شیفت شب
               </Badge>
             )}
             {catName && (
@@ -478,25 +499,36 @@ export function ItemDetailDialog({
 
         {/* ---- footer actions ---- */}
         <div className="sticky bottom-0 mt-2 flex items-center gap-2 border-t bg-card/95 p-4 pb-5 backdrop-blur">
-          <Button
-            onClick={handleAddToCart}
-            disabled={!item.isAvailable}
-            className={`h-11 flex-1 rounded-xl text-sm font-bold shadow-sm ${
-              added ? "bg-emerald-600 text-white hover:bg-emerald-600" : ""
-            }`}
-          >
-            {added ? (
-              <>
-                <Check className="ml-1.5 h-4.5 w-4.5 animate-fade-up" />
-                افزوده شد
-              </>
-            ) : (
-              <>
-                <ShoppingCart className="ml-1.5 h-4.5 w-4.5" />
-                افزودن به سبد
-              </>
-            )}
-          </Button>
+          {dinnerBlocked ? (
+            <Button
+              onClick={handleAddToCart}
+              title={dinnerOnlyMessage(businessHours)}
+              className="h-11 flex-1 rounded-xl border border-gold/40 bg-gold/10 text-sm font-bold text-gold-foreground shadow-none hover:bg-gold/15"
+            >
+              <Moon className="ml-1.5 h-4.5 w-4.5" />
+              فقط شیفت شب 🌙
+            </Button>
+          ) : (
+            <Button
+              onClick={handleAddToCart}
+              disabled={!item.isAvailable}
+              className={`h-11 flex-1 rounded-xl text-sm font-bold shadow-sm ${
+                added ? "bg-emerald-600 text-white hover:bg-emerald-600" : ""
+              }`}
+            >
+              {added ? (
+                <>
+                  <Check className="ml-1.5 h-4.5 w-4.5 animate-fade-up" />
+                  افزوده شد
+                </>
+              ) : (
+                <>
+                  <ShoppingCart className="ml-1.5 h-4.5 w-4.5" />
+                  افزودن به سبد
+                </>
+              )}
+            </Button>
+          )}
           {onOrder && (
             <Button
               onClick={() => {

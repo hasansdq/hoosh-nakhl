@@ -40,7 +40,6 @@ export async function GET() {
         taxAmount: o.taxAmount,
         total: o.total,
         createdAt: o.createdAt.toISOString(),
-        scheduledFor: o.scheduledFor ? o.scheduledFor.toISOString() : null,
         items: o.items.map((i) => ({
           menuItemId: i.menuItemId,
           name: i.name,

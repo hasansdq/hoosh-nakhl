@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import Image from "next/image";
 import { api } from "@/lib/client-api";
 import { Button } from "@/components/ui/button";
@@ -37,6 +37,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { toPersianDigits } from "@/lib/fa";
+import { CategoryIcon, CATEGORY_ICONS } from "@/components/CategoryIcon";
 import {
   Plus,
   Pencil,
@@ -53,6 +54,15 @@ import {
   X,
   Leaf,
   Flame,
+  FolderOpen,
+  FolderPlus,
+  Link2,
+  ArrowUp,
+  ArrowDown,
+  Eye,
+  EyeOff,
+  FolderInput,
+  Info,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -84,8 +94,17 @@ interface CategoryRow {
   icon: string | null;
   sortOrder: number;
   isActive: boolean;
+  baranGroupId: number | null;
+  baranMainGroupId: number | null;
   itemsCount: number;
 }
+
+const emptyCatForm = {
+  name: "",
+  icon: "",
+  sortOrder: "0",
+  isActive: true,
+};
 
 const emptyForm = {
   name: "",
@@ -123,6 +142,17 @@ export function MenuManager({ initialFilter }: { initialFilter?: string } = {}) 
   const [deleteTarget, setDeleteTarget] = useState<MenuItemRow | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const galleryFileRef = useRef<HTMLInputElement>(null);
+
+  // ---- مدیریت دسته‌بندی‌ها ----
+  const [catManagerOpen, setCatManagerOpen] = useState(false);
+  const [catDialogOpen, setCatDialogOpen] = useState(false);
+  const [catEditing, setCatEditing] = useState<CategoryRow | null>(null);
+  const [catForm, setCatForm] = useState(emptyCatForm);
+  const [catSaving, setCatSaving] = useState(false);
+  const [catDeleting, setCatDeleting] = useState(false);
+  const [catDeleteTarget, setCatDeleteTarget] = useState<CategoryRow | null>(null);
+  const [catMoveTo, setCatMoveTo] = useState("");
+  const [catReordering, setCatReordering] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -307,11 +337,130 @@ export function MenuManager({ initialFilter }: { initialFilter?: string } = {}) 
     load();
   };
 
+  // ============ مدیریت دسته‌بندی‌ها ============
+
+  const openCatCreate = () => {
+    setCatEditing(null);
+    // ترتیب بعد از آخرین دسته
+    const nextOrder = categories.length > 0 ? Math.max(...categories.map((c) => c.sortOrder)) + 1 : 0;
+    setCatForm({ ...emptyCatForm, sortOrder: String(Math.min(nextOrder, 999)) });
+    setCatDialogOpen(true);
+  };
+
+  const openCatEdit = (cat: CategoryRow) => {
+    setCatEditing(cat);
+    setCatForm({
+      name: cat.name,
+      icon: cat.icon ?? "",
+      sortOrder: String(cat.sortOrder),
+      isActive: cat.isActive,
+    });
+    setCatDialogOpen(true);
+  };
+
+  const saveCat = async () => {
+    if (catForm.name.trim().length < 2) return toast.error("نام دسته را وارد کنید (حداقل ۲ نویسه)");
+    const sortOrder = Number(catForm.sortOrder.replace(/\D/g, "")) || 0;
+
+    setCatSaving(true);
+    const payload = {
+      name: catForm.name.trim(),
+      icon: catForm.icon || "",
+      sortOrder,
+      isActive: catForm.isActive,
+    };
+    const res = catEditing
+      ? await api(`/api/admin/categories/${catEditing.id}`, { method: "PUT", body: payload })
+      : await api("/api/admin/categories", { body: payload });
+    setCatSaving(false);
+    if (!res.success) return toast.error(res.error ?? "خطا در ذخیره دسته");
+
+    toast.success(
+      catEditing
+        ? catEditing.baranGroupId
+          ? `دسته به‌روزرسانی شد ✅ (با همگام‌سازی بعدی باران، نام ممکن است به «نام گروه باران» برگردد)`
+          : "دسته به‌روزرسانی شد ✅"
+        : "دسته جدید اضافه شد ✅"
+    );
+    setCatDialogOpen(false);
+    load(); // اقلام هم رفرش می‌شوند (categoryName ممکن است تغییر کرده باشد)
+  };
+
+  const toggleCatActive = async (cat: CategoryRow) => {
+    const res = await api(`/api/admin/categories/${cat.id}`, {
+      method: "PUT",
+      body: { isActive: !cat.isActive },
+    });
+    if (!res.success) return toast.error(res.error ?? "خطا در تغییر وضعیت");
+    setCategories((prev) => prev.map((c) => (c.id === cat.id ? { ...c, isActive: !c.isActive } : c)));
+    toast.success(
+      cat.isActive
+        ? `دسته «${cat.name}» از منوی سایت مخفی شد (آیتم‌ها حذف نمی‌شوند)`
+        : `دسته «${cat.name}» در منوی سایت نمایش داده می‌شود`
+    );
+    load(); // اقلام هم رفرش شوند تا فیلتر/نام‌ها دقیق بمانند
+  };
+
+  const removeCat = async () => {
+    if (!catDeleteTarget) return;
+    if (catDeleteTarget.itemsCount > 0 && !catMoveTo) {
+      return toast.error("دستهٔ مقصد را برای انتقال آیتم‌ها انتخاب کنید");
+    }
+    setCatDeleting(true);
+    const res = await api(`/api/admin/categories/${catDeleteTarget.id}`, {
+      method: "DELETE",
+      body: catDeleteTarget.itemsCount > 0 ? { moveItemsTo: catMoveTo } : {},
+    });
+    setCatDeleting(false);
+    if (!res.success) {
+      return toast.error(res.error ?? "خطا در حذف دسته");
+    }
+    const msg = (res as { message?: string }).message ?? "دسته حذف شد";
+    toast.success(msg);
+    setCatDeleteTarget(null);
+    setCatMoveTo("");
+    load();
+  };
+
+  /** جابه‌جایی ترتیب نمایش دسته با همسایهٔ قبلی/بعدی (swap sortOrder) */
+  const moveCat = async (cat: CategoryRow, dir: -1 | 1) => {
+    const sorted = [...categories].sort((a, b) => a.sortOrder - b.sortOrder);
+    const idx = sorted.findIndex((c) => c.id === cat.id);
+    const neighbor = dir === -1 ? sorted[idx - 1] : sorted[idx + 1];
+    if (!neighbor) return;
+
+    setCatReordering(cat.id);
+    const [resA, resB] = await Promise.all([
+      api(`/api/admin/categories/${cat.id}`, {
+        method: "PUT",
+        body: { sortOrder: neighbor.sortOrder },
+      }),
+      api(`/api/admin/categories/${neighbor.id}`, {
+        method: "PUT",
+        body: { sortOrder: cat.sortOrder },
+      }),
+    ]);
+    setCatReordering(null);
+    if (!resA.success || !resB.success) {
+      return toast.error("خطا در جابه‌جایی ترتیب — دوباره تلاش کنید");
+    }
+    load();
+  };
+
   const filtered = items.filter((i) => {
     if (catFilter !== "ALL" && i.categoryId !== catFilter) return false;
     if (search && !i.name.includes(search)) return false;
     return true;
   });
+
+  // شمارش اقلام ناموجود هر دسته — برای بج «X ناموجود» در مدیریت دسته‌ها
+  const unavailableByCat = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const it of items) {
+      if (!it.isAvailable) map.set(it.categoryId, (map.get(it.categoryId) ?? 0) + 1);
+    }
+    return map;
+  }, [items]);
 
   return (
     <div className="space-y-4">
@@ -325,10 +474,20 @@ export function MenuManager({ initialFilter }: { initialFilter?: string } = {}) 
             {toPersianDigits(items.length)} آیتم در {toPersianDigits(categories.length)} دسته‌بندی
           </p>
         </div>
-        <Button onClick={openCreate} className="rounded-xl font-bold shadow-lg shadow-primary/25">
-          <Plus className="ml-1.5 h-4 w-4" />
-          افزودن آیتم جدید
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            onClick={() => setCatManagerOpen(true)}
+            variant="outline"
+            className="rounded-xl font-bold"
+          >
+            <FolderOpen className="ml-1.5 h-4 w-4 text-primary" />
+            مدیریت دسته‌بندی‌ها
+          </Button>
+          <Button onClick={openCreate} className="rounded-xl font-bold shadow-lg shadow-primary/25">
+            <Plus className="ml-1.5 h-4 w-4" />
+            افزودن آیتم جدید
+          </Button>
+        </div>
       </div>
 
       {/* filters */}
@@ -355,13 +514,28 @@ export function MenuManager({ initialFilter }: { initialFilter?: string } = {}) 
             <button
               key={c.id}
               onClick={() => setCatFilter(c.id)}
-              className={`rounded-xl px-3.5 py-2 text-xs font-bold transition ${
+              className={`flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-xs font-bold transition ${
                 catFilter === c.id ? "bg-primary text-primary-foreground" : "border bg-card hover:bg-accent"
-              }`}
+              } ${!c.isActive ? "opacity-55" : ""}`}
+              title={c.isActive ? undefined : "این دسته در سایت مخفی است — از «مدیریت دسته‌بندی‌ها» فعالش کنید"}
             >
+              <CategoryIcon icon={c.icon} className="h-3.5 w-3.5" />
               {c.name}
+              <span className={`rounded-md px-1.5 py-0.5 text-[10px] font-black ${
+                catFilter === c.id ? "bg-white/25" : "bg-muted"
+              }`}>
+                {toPersianDigits(c.itemsCount)}
+              </span>
             </button>
           ))}
+          <button
+            onClick={() => setCatManagerOpen(true)}
+            title="مدیریت دسته‌بندی‌ها (افزودن، ویرایش، حذف، ترتیب)"
+            className="flex items-center gap-1 rounded-xl border border-dashed px-3 py-2 text-xs font-bold text-muted-foreground transition hover:border-primary/50 hover:text-primary"
+          >
+            <FolderPlus className="h-3.5 w-3.5" />
+            دسته جدید
+          </button>
         </div>
       </div>
 
@@ -491,7 +665,11 @@ export function MenuManager({ initialFilter }: { initialFilter?: string } = {}) 
                 <SelectContent>
                   {categories.map((c) => (
                     <SelectItem key={c.id} value={c.id}>
-                      {c.name}
+                      <span className="flex items-center gap-1.5">
+                        <CategoryIcon icon={c.icon} className="h-3.5 w-3.5 text-primary" />
+                        {c.name}
+                        {!c.isActive && <span className="text-[10px] text-muted-foreground">(مخفی در سایت)</span>}
+                      </span>
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -752,6 +930,328 @@ export function MenuManager({ initialFilter }: { initialFilter?: string } = {}) 
               className="flex-1 rounded-xl bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
               بله، حذف کن
+            </AlertDialogAction>
+            <AlertDialogCancel className="flex-1 rounded-xl">انصراف</AlertDialogCancel>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      {/* ============ category manager ============ */}
+      <Dialog open={catManagerOpen} onOpenChange={setCatManagerOpen}>
+        <DialogContent className="max-h-[90vh] max-w-2xl overflow-hidden rounded-2xl p-0" aria-describedby={undefined}>
+          <DialogHeader className="border-b px-5 py-4">
+            <DialogTitle className="flex items-center gap-2">
+              <FolderOpen className="h-5 w-5 text-primary" />
+              مدیریت دسته‌بندی‌ها
+            </DialogTitle>
+            <DialogDescription>
+              افزودن، ویرایش، حذف و مرتب‌سازی دسته‌های منو — تغییرات بلافاصله در دیتابیس ذخیره و در سایت و هوش نخل اعمال می‌شود
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="flex items-center justify-between gap-2 px-5 pt-3">
+            <p className="text-xs font-bold text-muted-foreground">
+              {toPersianDigits(categories.length)} دسته — به‌ترتیب نمایش در سایت
+            </p>
+            <Button size="sm" onClick={openCatCreate} className="rounded-xl font-bold">
+              <FolderPlus className="ml-1.5 h-4 w-4" />
+              دسته جدید
+            </Button>
+          </div>
+
+          <div className="max-h-[55vh] space-y-2 overflow-y-auto px-5 py-3">
+            {[...categories]
+              .sort((a, b) => a.sortOrder - b.sortOrder)
+              .map((cat, idx, arr) => (
+                <div
+                  key={cat.id}
+                  className={`flex flex-wrap items-center gap-2 rounded-xl border p-3 transition ${
+                    cat.isActive ? "bg-card" : "bg-muted/40 opacity-75"
+                  }`}
+                >
+                  {/* reorder */}
+                  <div className="flex flex-col gap-0.5">
+                    <button
+                      disabled={idx === 0 || catReordering === cat.id}
+                      onClick={() => moveCat(cat, -1)}
+                      className="rounded-md p-0.5 text-muted-foreground transition hover:bg-accent hover:text-primary disabled:opacity-25"
+                      title="انتقال به بالا"
+                      aria-label={`انتقال دسته ${cat.name} به بالا`}
+                    >
+                      <ArrowUp className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      disabled={idx === arr.length - 1 || catReordering === cat.id}
+                      onClick={() => moveCat(cat, 1)}
+                      className="rounded-md p-0.5 text-muted-foreground transition hover:bg-accent hover:text-primary disabled:opacity-25"
+                      title="انتقال به پایین"
+                      aria-label={`انتقال دسته ${cat.name} به پایین`}
+                    >
+                      <ArrowDown className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+
+                  {/* identity */}
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                    {cat.icon ? (
+                      <CategoryIcon icon={cat.icon} className="h-5 w-5" />
+                    ) : (
+                      <UtensilsCrossed className="h-5 w-5 opacity-40" />
+                    )}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="truncate text-sm font-extrabold">{cat.name}</span>
+                      {!cat.isActive && (
+                        <Badge variant="secondary" className="gap-1 text-[10px]">
+                          <EyeOff className="h-3 w-3" />
+                          مخفی در سایت
+                        </Badge>
+                      )}
+                      {(unavailableByCat.get(cat.id) ?? 0) > 0 && (
+                        <Badge
+                          className="gap-1 bg-red-600/10 text-red-700 hover:bg-red-600/10 dark:text-red-400"
+                          title="اقلام ناموجود این دسته — از فیلتر لیست، ناموجودها را پیدا کنید"
+                        >
+                          <PackageX className="h-3 w-3" />
+                          {toPersianDigits(unavailableByCat.get(cat.id) ?? 0)} ناموجود
+                        </Badge>
+                      )}
+                      {cat.baranGroupId != null && (
+                        <Badge
+                          className="gap-1 bg-amber-600/15 text-amber-700 hover:bg-amber-600/15 dark:text-amber-400"
+                          title={`کد گروه باران: ${cat.baranGroupId}${cat.baranMainGroupId != null ? ` (سرگروه: ${cat.baranMainGroupId})` : ""}`}
+                        >
+                          <Link2 className="h-3 w-3" />
+                          باران {toPersianDigits(cat.baranGroupId)}
+                        </Badge>
+                      )}
+                    </div>
+                    <p className="mt-0.5 text-[11px] text-muted-foreground">
+                      {toPersianDigits(cat.itemsCount)} آیتم • ترتیب: {toPersianDigits(cat.sortOrder)}
+                    </p>
+                  </div>
+
+                  {/* actions */}
+                  <div className="flex items-center gap-0.5">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8"
+                      title={cat.isActive ? "مخفی‌کردن در سایت" : "نمایش در سایت"}
+                      onClick={() => toggleCatActive(cat)}
+                    >
+                      {cat.isActive ? (
+                        <Eye className="h-4 w-4 text-emerald-600" />
+                      ) : (
+                        <EyeOff className="h-4 w-4 text-muted-foreground" />
+                      )}
+                    </Button>
+                    <Button variant="ghost" size="icon" className="h-8 w-8" title="ویرایش" onClick={() => openCatEdit(cat)}>
+                      <Pencil className="h-4 w-4" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 text-destructive"
+                      title="حذف"
+                      onClick={() => {
+                        setCatDeleteTarget(cat);
+                        setCatMoveTo("");
+                      }}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </div>
+              ))}
+
+            {categories.length === 0 && (
+              <div className="flex flex-col items-center gap-2 rounded-2xl border-2 border-dashed border-muted-foreground/25 px-6 py-12 text-center text-muted-foreground">
+                <FolderOpen className="h-10 w-10 opacity-40" />
+                <p className="text-xs font-bold">هنوز دسته‌ای ثبت نشده — اولین دسته را بسازید</p>
+              </div>
+            )}
+          </div>
+
+          <div className="flex items-start gap-2 border-t bg-muted/30 px-5 py-3">
+            <Info className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+            <p className="text-[11px] leading-5 text-muted-foreground">
+              دسته‌های دارای بج «باران» توسط همگام‌سازی نرم‌افزار باران ساخته شده‌اند؛ اگر باران دوباره کالای آن گروه را ارسال کند،
+              دسته (در صورت حذف) دوباره ساخته می‌شود و نامش به نام گروه باران برمی‌گردد.
+            </p>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* category create/edit form */}
+      <Dialog open={catDialogOpen} onOpenChange={setCatDialogOpen}>
+        <DialogContent className="max-h-[90vh] max-w-lg overflow-y-auto rounded-2xl" aria-describedby={undefined}>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              {catEditing ? (
+                <>
+                  <Pencil className="h-4 w-4 text-primary" />
+                  ویرایش دسته «{catEditing.name}»
+                </>
+              ) : (
+                <>
+                  <FolderPlus className="h-4 w-4 text-primary" />
+                  افزودن دسته جدید
+                </>
+              )}
+            </DialogTitle>
+            <DialogDescription>
+              دسته‌ها در منوی سایت، تب‌های دسته‌بندی و هوش نخل به‌کار می‌روند
+            </DialogDescription>
+          </DialogHeader>
+
+          {catEditing?.baranGroupId != null && (
+            <div className="flex items-start gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3">
+              <Link2 className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+              <p className="text-[11px] leading-5 text-amber-700 dark:text-amber-400">
+                این دسته به گروه باران (کد {toPersianDigits(catEditing.baranGroupId)}) متصل است. تغییر نام مجاز است، اما در
+                همگام‌سازی بعدی باران (ProductSEND) نام به نام گروه باران برمی‌گردد.
+              </p>
+            </div>
+          )}
+
+          <div className="space-y-4">
+            <div className="space-y-1.5">
+              <Label>نام دسته *</Label>
+              <Input
+                value={catForm.name}
+                onChange={(e) => setCatForm({ ...catForm, name: e.target.value })}
+                className="rounded-xl"
+                placeholder="مثلاً: کباب‌های ایرانی"
+                maxLength={60}
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <Label>آیکون دسته (اختیاری)</Label>
+                <span className="text-[11px] text-muted-foreground">
+                  {catForm.icon ? CATEGORY_ICONS[catForm.icon]?.label : "بدون آیکون"}
+                </span>
+              </div>
+              <div className="grid max-h-44 grid-cols-8 gap-1.5 overflow-y-auto rounded-xl border-2 border-dashed bg-muted/30 p-2.5 sm:grid-cols-10">
+                <button
+                  type="button"
+                  onClick={() => setCatForm({ ...catForm, icon: "" })}
+                  className={`flex h-9 items-center justify-center rounded-lg border transition ${
+                    catForm.icon === "" ? "border-primary bg-primary/10 text-primary" : "border-transparent text-muted-foreground hover:bg-accent"
+                  }`}
+                  title="بدون آیکون"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+                {Object.entries(CATEGORY_ICONS).map(([key, { label, Icon }]) => (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => setCatForm({ ...catForm, icon: key })}
+                    className={`flex h-9 items-center justify-center rounded-lg border transition ${
+                      catForm.icon === key ? "border-primary bg-primary/10 text-primary" : "border-transparent text-muted-foreground hover:bg-accent"
+                    }`}
+                    title={label}
+                    aria-label={label}
+                  >
+                    <Icon className="h-4 w-4" />
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label>ترتیب نمایش</Label>
+                <Input
+                  dir="ltr"
+                  inputMode="numeric"
+                  value={catForm.sortOrder}
+                  onChange={(e) => setCatForm({ ...catForm, sortOrder: e.target.value.replace(/\D/g, "") })}
+                  className="rounded-xl"
+                  placeholder="0"
+                />
+              </div>
+              <div className="flex items-center justify-between rounded-xl border p-3.5">
+                <div>
+                  <Label className="font-bold">فعال در سایت</Label>
+                  <p className="text-[11px] text-muted-foreground">دستهٔ غیرفعال از منو مخفی می‌شود</p>
+                </div>
+                <Switch checked={catForm.isActive} onCheckedChange={(v) => setCatForm({ ...catForm, isActive: v })} />
+              </div>
+            </div>
+          </div>
+
+          <div className="flex gap-2 pt-1">
+            <Button onClick={saveCat} disabled={catSaving} className="flex-1 rounded-xl font-bold">
+              {catSaving ? <Loader2 className="ml-2 h-4 w-4 animate-spin" /> : null}
+              {catEditing ? "ذخیره تغییرات" : "افزودن دسته"}
+            </Button>
+            <Button variant="outline" onClick={() => setCatDialogOpen(false)} className="rounded-xl">
+              انصراف
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* category delete confirm */}
+      <AlertDialog open={!!catDeleteTarget} onOpenChange={(open) => !open && setCatDeleteTarget(null)}>
+        <AlertDialogContent className="rounded-2xl">
+          <AlertDialogHeader>
+            <AlertDialogTitle>حذف دسته «{catDeleteTarget?.name}»؟</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-3 text-sm leading-6">
+                {catDeleteTarget && catDeleteTarget.itemsCount > 0 ? (
+                  <>
+                    <p>
+                      این دسته <b>{toPersianDigits(catDeleteTarget.itemsCount)} آیتم</b> دارد. برای حذف، مقصد انتقال آیتم‌ها را
+                      انتخاب کنید — آیتم‌ها با همهٔ اطلاعات (تصاویر، قیمت، فروش) منتقل می‌شوند و هیچ داده‌ای از بین نمی‌رود.
+                    </p>
+                    <Select value={catMoveTo} onValueChange={setCatMoveTo}>
+                      <SelectTrigger className="rounded-xl">
+                        <SelectValue placeholder="انتخاب دستهٔ مقصد…" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {categories
+                          .filter((c) => c.id !== catDeleteTarget?.id)
+                          .map((c) => (
+                            <SelectItem key={c.id} value={c.id}>
+                              {c.name} ({toPersianDigits(c.itemsCount)} آیتم)
+                            </SelectItem>
+                          ))}
+                      </SelectContent>
+                    </Select>
+                  </>
+                ) : (
+                  <p>این دسته خالی است و با خیال راحت حذف می‌شود.</p>
+                )}
+                {catDeleteTarget?.baranGroupId != null && (
+                  <p className="flex items-start gap-1.5 rounded-lg bg-amber-500/10 p-2 text-xs text-amber-700 dark:text-amber-400">
+                    <Link2 className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                    این دسته به باران متصل است؛ اگر باران دوباره کالای این گروه را ارسال کند، دسته با همان نام ساخته می‌شود.
+                  </p>
+                )}
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="flex-row gap-2">
+            <AlertDialogAction
+              onClick={removeCat}
+              disabled={catDeleting || (catDeleteTarget != null && catDeleteTarget.itemsCount > 0 && !catMoveTo)}
+              className="flex-1 rounded-xl bg-destructive text-destructive-foreground hover:bg-destructive/90 disabled:opacity-50"
+            >
+              {catDeleting ? (
+                <Loader2 className="mx-auto h-4 w-4 animate-spin" />
+              ) : catDeleteTarget && catDeleteTarget.itemsCount > 0 ? (
+                <>
+                  <FolderInput className="ml-1.5 h-4 w-4" />
+                  انتقال و حذف
+                </>
+              ) : (
+                "بله، حذف کن"
+              )}
             </AlertDialogAction>
             <AlertDialogCancel className="flex-1 rounded-xl">انصراف</AlertDialogCancel>
           </AlertDialogFooter>

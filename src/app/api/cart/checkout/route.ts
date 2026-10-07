@@ -2,13 +2,13 @@ import { NextRequest } from "next/server";
 import { db } from "@/lib/db";
 import { ok, fail, requireUser, logAudit } from "@/lib/api";
 import { getSettings, type PaymentSettings, type GeneralSettings } from "@/lib/settings";
+import { closedMessage, dinnerOnlyMessage, isDinnerShiftNow, isOpenNow } from "@/lib/hours";
 import { zarinpalRequest } from "@/lib/payment/zarinpal";
 import { getPublicOrigin } from "@/lib/public-url";
 import { computePricing } from "@/lib/chat/engine";
 import { checkCoupon } from "@/lib/coupons";
 import { rateLimit } from "@/lib/auth";
-import { formatToman, formatJalali } from "@/lib/fa";
-import { validateScheduleSlot } from "@/lib/schedule";
+import { formatToman } from "@/lib/fa";
 
 // ============ POST /api/cart/checkout — سبد خرید: ثبت سفارش + درخواست پرداخت (STRICT) ============
 
@@ -18,7 +18,6 @@ interface CartCheckoutBody {
   couponCode?: unknown;
   address?: unknown;
   note?: unknown;
-  scheduledFor?: unknown; // ISO string — زمان تحویل پیش‌سفارش (اختیاری)
 }
 
 const MAX_QTY_PER_ITEM = 30;
@@ -35,21 +34,17 @@ export async function POST(req: NextRequest) {
     const rl = rateLimit(`pay:${user.id}`, 8, 5 * 60 * 1000);
     if (!rl.ok) return fail("درخواست‌های پرداخت بیش از حد مجاز", 429);
 
+    // ---- گیت ساعات کاری: خارج از ناهار/شام، ثبت سفارش پذیرفته نمی‌شود ----
+    const generalGate = await getSettings<GeneralSettings>("general");
+    if (!isOpenNow(generalGate.businessHours)) {
+      return fail(closedMessage(generalGate.businessHours), 423);
+    }
+
     const body = (await req.json().catch(() => ({}))) as CartCheckoutBody;
     const deliveryMethod = body.deliveryMethod === "PICKUP" ? "PICKUP" : "DELIVERY";
     const address = (typeof body.address === "string" ? body.address : "").trim().slice(0, 500);
     const couponCode = (typeof body.couponCode === "string" ? body.couponCode : "").trim().slice(0, 24);
     const note = typeof body.note === "string" ? body.note.slice(0, 300) : null;
-
-    // ---- پیش‌سفارش: اعتبارسنجی زمان تحویل (۴۵ دقیقه تا ۷ روز آینده، ساعت ۱۲ تا ۲۳:۵۹) ----
-    let scheduledForDate: Date | null = null;
-    if (body.scheduledFor !== undefined && body.scheduledFor !== null && body.scheduledFor !== "") {
-      const sv = validateScheduleSlot(
-        body.scheduledFor instanceof Date ? body.scheduledFor : String(body.scheduledFor)
-      );
-      if (!sv.ok) return fail(sv.reason, 400);
-      scheduledForDate = sv.date;
-    }
 
     // ---- normalize items ----
     const seen = new Map<string, number>();
@@ -67,7 +62,10 @@ export async function POST(req: NextRequest) {
 
     // ---- verify items exist & available & re-price from DB (never trust client prices) ----
     const ids = [...seen.keys()];
-    const menuItems = await db.menuItem.findMany({ where: { id: { in: ids }, isAvailable: true } });
+    const menuItems = await db.menuItem.findMany({
+      where: { id: { in: ids }, isAvailable: true },
+      include: { category: { select: { dinnerOnly: true } } },
+    });
     const items = [...seen]
       .map(([itemId, quantity]) => {
         const mi = menuItems.find((m) => m.id === itemId);
@@ -84,6 +82,19 @@ export async function POST(req: NextRequest) {
 
     if (items.length === 0) {
       return fail("آیتم‌های سبد دیگر معتبر نیستند. لطفاً سبد خود را به‌روز کنید");
+    }
+
+    // ---- گیت «فقط شیفت شب»: خارج از سرویس شام، آیتم دسته‌های dinner-only پذیرفته نمی‌شود ----
+    const dinnerShiftActive = isDinnerShiftNow(generalGate.businessHours);
+    if (!dinnerShiftActive) {
+      const blockedNames = menuItems
+        .filter((mi) => mi.category.dinnerOnly && seen.has(mi.id))
+        .map((mi) => mi.name);
+      if (blockedNames.length > 0) {
+        return fail(`${dinnerOnlyMessage(generalGate.businessHours)} — ${blockedNames.join("، ")}`, 422, {
+          blockedItems: blockedNames,
+        });
+      }
     }
 
     const general = await getSettings<GeneralSettings>("general");
@@ -127,7 +138,6 @@ export async function POST(req: NextRequest) {
         status: "PENDING_PAYMENT",
         address: deliveryMethod === "DELIVERY" ? address : null,
         note,
-        scheduledFor: scheduledForDate,
         subtotal: pricing.subtotal,
         deliveryFee: pricing.deliveryFee,
         taxRate: general.taxPercent / 100,
@@ -146,12 +156,9 @@ export async function POST(req: NextRequest) {
           })),
         },
         statusLogs: {
-          // نوت پایه دست‌نخورده می‌ماند (match های دیگر روی آن کار می‌کنند)؛suffix پیش‌سفارش فقط داخل پرانتز
           create: {
             status: "PENDING_PAYMENT",
-            note: scheduledForDate
-              ? `سفارش از سبد خرید ثبت شد (پیش‌سفارش برای ${formatJalali(scheduledForDate, true)})`
-              : "سفارش از سبد خرید ثبت شد",
+            note: "سفارش از سبد خرید ثبت شد",
           },
         },
       },
@@ -201,7 +208,6 @@ export async function POST(req: NextRequest) {
         total: order.total,
         simulated: payResult.simulated,
         coupon: appliedCouponCode,
-        scheduledFor: scheduledForDate ? scheduledForDate.toISOString() : null,
         source: "cart",
       },
     });

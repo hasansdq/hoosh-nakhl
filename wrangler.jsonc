@@ -1,0 +1,90 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+
+  // ── Nakhl Restaurant on Cloudflare Workers (via @opennextjs/cloudflare) ──
+  //  • `main` is a thin custom entry that re-exports the OpenNext worker
+  //    (generated at `.open-next/worker.js` during `bun run cf:build`) and
+  //    routes WebSocket upgrades for the realtime channel to the Durable
+  //    Object before they enter the Next.js pipeline.
+  //  • Build:      bun run cf:build      (opennextjs-cloudflare build)
+  //    Preview:    bun run cf:dev        (wrangler dev)
+  //    Deploy:     bun run deploy
+  "name": "nakhl-restaurant",
+  "main": "src/worker.js",
+
+  // Keep in sync with the workerd version supported by @opennextjs/cloudflare.
+  "compatibility_date": "2025-09-01",
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+
+  // Static assets (Next.js public/ + build output) served by the platform.
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS"
+  },
+
+  // ── D1: application database (Prisma + @prisma/adapter-d1) ──
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "nakhl-db",
+      // Create with:  wrangler d1 create nakhl-db
+      // then replace this placeholder with the printed database_id.
+      "database_id": "REPLACE_WITH_YOUR_D1_DATABASE_ID",
+      "migrations_dir": "migrations"
+    }
+  ],
+
+  // ── R2: uploaded images (avatars, food photos) ──
+  "r2_buckets": [
+    {
+      "binding": "R2",
+      // Create with:  wrangler r2 bucket create nakhl-uploads
+      "bucket_name": "nakhl-uploads"
+    },
+    {
+      // OpenNext ISR/full-route cache bucket (optional but recommended).
+      // Create with:  wrangler r2 bucket create nakhl-restaurant-opennext-cache
+      "binding": "NEXT_INC_CACHE_R2_BUCKET",
+      "bucket_name": "nakhl-restaurant-opennext-cache"
+    }
+  ],
+
+  // Self-reference service binding used by the OpenNext incremental cache.
+  // The service name must match the worker name above.
+  "services": [
+    {
+      "binding": "WORKER_SELF_REFERENCE",
+      "service": "nakhl-restaurant"
+    }
+  ],
+
+  // ── Durable Objects: realtime notifications (replaces Socket.IO service) ──
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "REALTIME",
+        "class_name": "NakhlRealtime"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["NakhlRealtime"]
+    }
+  ],
+
+  // Non-secret runtime variables. Secrets go to `wrangler secret put …`.
+  // ADMIN_NOTIFY_KEY below is the DEV/preview value (local Miniflare + z-space
+  // preview). It is visible in the repo, so it must NEVER be trusted in
+  // production — deploy with:  wrangler secret put ADMIN_NOTIFY_KEY
+  // (a Workers secret overrides the var with the same name; the realtime
+  // Durable Object also refuses keys shorter than 16 chars).
+  "vars": {
+    "ADMIN_NOTIFY_KEY": "dev-preview-nakhl-3f8c21a9d74b6e05c2af417b"
+  },
+
+  "observability": {
+    "enabled": true
+  }
+}

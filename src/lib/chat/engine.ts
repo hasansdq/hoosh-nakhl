@@ -2,12 +2,13 @@ import "server-only";
 import { db } from "@/lib/db";
 import { getSettings, type AISettings, type GeneralSettings } from "@/lib/settings";
 import { chatCompletion, extractJson } from "@/lib/ai";
-import { buildSystemPrompt, type ChatStage, type MenuCategoryData, type OrderDraft } from "./prompts";
-import { deterministicParse, matchMenuItems, includesWord, type ParsedAction } from "./parser";
+import { buildSystemPrompt, type ChatStage, type MenuCategoryData, type OrderDraft, type OrderHistoryEntry, type TopFavoriteEntry } from "./prompts";
+import { deterministicParse, matchMenuItems, includesWord, detectStageNavIntent, wantsTracking, type ParsedAction } from "./parser";
 import { normalizePersian, formatToman } from "@/lib/fa";
 import { extractAllergenPhrases, matchAllergens } from "@/lib/chat/allergens";
 import { checkCoupon } from "@/lib/coupons";
 import { safeParseDietaryPrefs } from "@/lib/api";
+import { dinnerOnlyMessage, isDinnerShiftNow } from "@/lib/hours";
 
 // ============ Types ============
 
@@ -16,6 +17,7 @@ export interface RichMenuPayload {
   categories: {
     id: string;
     name: string;
+    dinnerOnly?: boolean;
     items: {
       id: string;
       name: string;
@@ -26,12 +28,13 @@ export interface RichMenuPayload {
       isSpecial: boolean;
       calories?: number | null;
       prepTime?: number | null;
+      dinnerOnly?: boolean;
     }[];
   }[];
 }
 
 export interface OrderSummaryPayload {
-  items: { name: string; quantity: number; unitPrice: number; lineTotal: number }[];
+  items: { itemId?: string; name: string; quantity: number; unitPrice: number; lineTotal: number }[];
   subtotal: number;
   deliveryFee: number;
   taxPercent: number;
@@ -58,6 +61,9 @@ export interface TrackingPayload {
   type: string;
   createdAt: string;
   paymentError?: string | null;
+  paymentRef?: string | null;
+  /** true when the order still awaits a successful payment (retry/edit allowed) */
+  unpaid?: boolean;
   items: { name: string; quantity: number }[];
   timeline: { status: string; label: string; at: string }[];
 }
@@ -77,6 +83,8 @@ export interface EngineResult {
     };
   };
   stage: ChatStage;
+  /** the persisted draft after this turn — the client mirrors it into the classic cart */
+  draft: OrderDraft;
 }
 
 export const ORDER_STATUS_LABELS: Record<string, string> = {
@@ -106,6 +114,7 @@ export async function loadMenuData(): Promise<MenuCategoryData[]> {
   return categories.map((c) => ({
     id: c.id,
     name: c.name,
+    dinnerOnly: c.dinnerOnly,
     items: c.items.map((i) => ({
       id: i.id,
       name: i.name,
@@ -115,6 +124,7 @@ export async function loadMenuData(): Promise<MenuCategoryData[]> {
       isDrink: i.isDrink,
       isVegetarian: i.isVegetarian,
       isSpicy: i.isSpicy,
+      dinnerOnly: c.dinnerOnly || undefined,
       description: i.description,
       ingredients: i.ingredients,
     })),
@@ -170,12 +180,29 @@ function resolveActionItem(action: ParsedAction, allItems: MenuCategoryData["ite
   return null;
 }
 
+// ============ Helpers: unpaid-order re-open ============
+
+/** Heuristic — does the user want to modify an order that was already issued? */
+function detectOrderEditIntent(message: string, categories: MenuCategoryData[]): boolean {
+  const norm = normalizePersian(message);
+  const EDIT_INTENT_WORDS = [
+    "تغییر", "ویرایش", "اصلاح", "عوض", "کم کن", "اضافه کن", "بردار", "حذف",
+    "پیک", "بیرونبر", "بیرون بر", "آدرس", "فاکتور", "برگرد", "بازگشت", "ادامه",
+    "پرداخت", "کمتر", "بیشتر",
+  ];
+  if (EDIT_INTENT_WORDS.some((w) => norm.includes(w))) return true;
+  // mentioning a concrete menu item while an unpaid order exists is also an edit signal
+  if (matchMenuItems(message, categories).length > 0) return true;
+  return false;
+}
+
 function applyActions(
   draft: OrderDraft,
   actions: ParsedAction[],
   categories: MenuCategoryData[],
   maxItems: number,
-  allergenPhrases: string[] = []
+  allergenPhrases: string[] = [],
+  dinnerBlockedMessage: string | null = null
 ): { draft: OrderDraft; log: string[]; warnings: string[] } {
   const allItems = categories.flatMap((c) => c.items);
   const log: string[] = [];
@@ -193,6 +220,11 @@ function applyActions(
         }
         if (!menu.isAvailable) {
           warnings.push(`${menu.name} فعلاً ناموجود است`);
+          break;
+        }
+        // ---- گیت «فقط شیفت شب»: خارج از سرویس شام، آیتم‌های دسته‌های dinner-only اضافه نمی‌شوند ----
+        if (menu.dinnerOnly && dinnerBlockedMessage) {
+          warnings.push(`«${menu.name}» ${dinnerBlockedMessage}`);
           break;
         }
         // deterministic allergen cross-check against the user's saved allergies
@@ -241,6 +273,9 @@ function applyActions(
       case "SET_ADDRESS":
         if (action.address && action.address.trim().length >= 8) {
           draft.address = action.address.trim().slice(0, 500);
+          // an address only makes sense for courier delivery — default it so
+          // the flow can never get stuck without a delivery method
+          draft.deliveryMethod = draft.deliveryMethod ?? "DELIVERY";
           log.push("ثبت آدرس");
         }
         break;
@@ -259,54 +294,61 @@ function applyActions(
 
 // ============ Stage machine validation ============
 
+/** An order can be re-opened for editing while it has not been paid yet */
+export function isOrderEditable(order: { status: string; paymentStatus: string }): boolean {
+  return (
+    order.paymentStatus !== "PAID" &&
+    (order.status === "PENDING_PAYMENT" || order.status === "PAYMENT_FAILED" || order.paymentStatus === "PENDING" || order.paymentStatus === "FAILED")
+  );
+}
+
+/**
+ * Permissive stage machine — the user may return to any previous step of the
+ * order flow at any time (even after the invoice has been issued). Forward
+ * moves are validated against the draft state so the flow can never skip
+ * required information.
+ */
 function validateStageTransition(current: ChatStage, suggested: ChatStage | null | undefined, draft: OrderDraft, categories: MenuCategoryData[]): ChatStage {
   const allItems = categories.flatMap((c) => c.items);
   const hasItems = draft.items.length > 0;
   const hasDrinks = draft.items.some((i) => allItems.find((m) => m.id === i.itemId)?.isDrink);
-  const hasFood = draft.items.some((i) => !allItems.find((m) => m.id === i.itemId)?.isDrink);
 
   let next: ChatStage = current;
 
-  switch (current) {
+  switch (suggested) {
     case "GREETING":
-      next = suggested === "TRACKING" && hasItems ? "TRACKING" : suggested === "TRACKING" ? "TRACKING" : "ORDERING";
+      next = hasItems ? current : "GREETING";
       break;
-    case "ORDERING": {
-      if (suggested === "TRACKING") next = "TRACKING";
-      else if (suggested === "DRINKS" && hasItems && !hasDrinks) next = "DRINKS";
-      else if (suggested === "DRINKS" && hasItems && hasDrinks) next = "DELIVERY_METHOD"; // already has drinks → skip suggestion
-      else if (suggested === "DELIVERY_METHOD" && hasItems) next = hasDrinks ? "DELIVERY_METHOD" : "DRINKS";
-      else next = "ORDERING";
+    case "ORDERING":
+      // backward navigation — reachable from ANY stage
+      next = "ORDERING";
       break;
-    }
     case "DRINKS":
-      if (suggested === "DELIVERY_METHOD" && hasItems) next = "DELIVERY_METHOD";
-      else if (suggested === "CONFIRMATION" && hasItems && draft.deliveryMethod) next = "CONFIRMATION";
-      else if (suggested === "ORDERING" && hasItems) next = "ORDERING"; // user wants to add more food
-      else next = "DRINKS";
+      next = hasItems ? (hasDrinks ? "DELIVERY_METHOD" : "DRINKS") : "ORDERING";
       break;
     case "DELIVERY_METHOD":
-      if (suggested === "ADDRESS" && draft.deliveryMethod === "DELIVERY") next = "ADDRESS";
-      else if (suggested === "CONFIRMATION" && draft.deliveryMethod) next = "CONFIRMATION";
-      else if (draft.deliveryMethod === "DELIVERY" && (suggested === "ADDRESS" || suggested === "CONFIRMATION")) next = "ADDRESS";
-      else next = "DELIVERY_METHOD";
+      next = hasItems ? "DELIVERY_METHOD" : "ORDERING";
       break;
     case "ADDRESS":
-      if (suggested === "CONFIRMATION" && draft.address) next = "CONFIRMATION";
-      else next = "ADDRESS";
+      next = hasItems ? (draft.deliveryMethod === "DELIVERY" ? "ADDRESS" : "DELIVERY_METHOD") : "ORDERING";
       break;
     case "CONFIRMATION":
-      if (suggested === "ADDRESS" && draft.deliveryMethod === "DELIVERY") next = "ADDRESS";
-      else if (suggested === "DELIVERY_METHOD") next = "DELIVERY_METHOD";
-      else if (suggested === "ORDERING" || suggested === "DRINKS") next = suggested;
-      else if (suggested === "TRACKING") next = "TRACKING";
-      else next = "CONFIRMATION";
+      next = hasItems
+        ? draft.deliveryMethod
+          ? "CONFIRMATION" // address can still be completed inside the invoice card
+          : "DELIVERY_METHOD"
+        : "ORDERING";
       break;
     case "TRACKING":
-      if (suggested === "GREETING" || suggested === "ORDERING") next = "ORDERING";
-      else next = "TRACKING";
+      next = "TRACKING";
       break;
   }
+
+  // ---- sanity clamps (draft state must always match the stage) ----
+  if (!hasItems && next !== "GREETING" && next !== "TRACKING") next = "ORDERING";
+  if (next === "ADDRESS" && draft.deliveryMethod !== "DELIVERY") next = "DELIVERY_METHOD";
+  if (next === "CONFIRMATION" && !draft.deliveryMethod) next = "DELIVERY_METHOD";
+
   return next;
 }
 
@@ -343,6 +385,7 @@ async function buildMenuPayload(categories: MenuCategoryData[], drinksOnly: bool
     .map((c) => ({
       id: c.id,
       name: c.name,
+      dinnerOnly: c.dinnerOnly || undefined,
       items: c.items
         .filter((i) => (drinksOnly ? i.isDrink : true))
         .map((i) => ({
@@ -355,6 +398,7 @@ async function buildMenuPayload(categories: MenuCategoryData[], drinksOnly: bool
           isSpecial: i.isSpecial,
           calories: i.calories,
           prepTime: i.prepTime,
+          dinnerOnly: c.dinnerOnly || undefined,
         })),
     }))
     .filter((c) => c.items.length > 0);
@@ -364,7 +408,7 @@ async function buildMenuPayload(categories: MenuCategoryData[], drinksOnly: bool
   };
 }
 
-async function buildOrderSummaryPayload(
+export async function buildOrderSummaryPayload(
   draft: OrderDraft,
   general: GeneralSettings,
   userId: string
@@ -394,6 +438,7 @@ async function buildOrderSummaryPayload(
   return {
     payload: {
       items: draft.items.map((i) => ({
+        itemId: i.itemId,
         name: i.name,
         quantity: i.quantity,
         unitPrice: i.price,
@@ -411,13 +456,19 @@ async function buildOrderSummaryPayload(
   };
 }
 
-async function buildTrackingPayload(userId: string): Promise<TrackingPayload | null> {
-  const order = await db.order.findFirst({
-    where: { userId },
-    orderBy: { createdAt: "desc" },
-    include: { items: true, statusLogs: { orderBy: { createdAt: "asc" } } },
-  });
-  if (!order) return null;
+/** Build the tracking-card payload from a loaded order (pure — no DB access) */
+export function trackingPayloadFromOrder(order: {
+  orderNumber: string;
+  status: string;
+  paymentStatus: string;
+  total: number;
+  type: string;
+  createdAt: Date;
+  paymentError?: string | null;
+  paymentRef?: string | null;
+  items: { name: string; quantity: number }[];
+  statusLogs: { status: string; createdAt: Date }[];
+}): TrackingPayload {
   return {
     orderNumber: order.orderNumber,
     status: order.status,
@@ -427,6 +478,8 @@ async function buildTrackingPayload(userId: string): Promise<TrackingPayload | n
     type: order.type,
     createdAt: order.createdAt.toISOString(),
     paymentError: order.paymentError,
+    paymentRef: order.paymentRef ?? null,
+    unpaid: isOrderEditable(order),
     items: order.items.map((i) => ({ name: i.name, quantity: i.quantity })),
     timeline: order.statusLogs.map((l) => ({
       status: l.status,
@@ -434,6 +487,16 @@ async function buildTrackingPayload(userId: string): Promise<TrackingPayload | n
       at: l.createdAt.toISOString(),
     })),
   };
+}
+
+async function buildTrackingPayload(userId: string): Promise<TrackingPayload | null> {
+  const order = await db.order.findFirst({
+    where: { userId },
+    orderBy: { createdAt: "desc" },
+    include: { items: true, statusLogs: { orderBy: { createdAt: "asc" } } },
+  });
+  if (!order) return null;
+  return trackingPayloadFromOrder(order);
 }
 
 // ============ Main engine ============
@@ -449,7 +512,7 @@ export async function processChatMessage(
   ]);
 
   const categories = await loadMenuData();
-  const draft = parseDraft(session.draft);
+  let draft = parseDraft(session.draft);
   const currentStage = (session.stage as ChatStage) || "GREETING";
 
   const user = await db.user.findUnique({ where: { id: userId } });
@@ -464,6 +527,72 @@ export async function processChatMessage(
     where: { userId },
     orderBy: { createdAt: "desc" },
   });
+
+  // ---- order history + personalized favorites (for the AI's memory) ----
+  const historyOrders = await db.order.findMany({
+    where: { userId, status: { notIn: ["PENDING_PAYMENT", "PAYMENT_FAILED", "CANCELED"] } },
+    orderBy: { createdAt: "desc" },
+    take: 6,
+    include: { items: true },
+  });
+  const orderHistory: OrderHistoryEntry[] = historyOrders
+    .slice()
+    .reverse()
+    .map((o) => ({
+      orderNumber: o.orderNumber,
+      createdAt: o.createdAt,
+      total: o.total,
+      status: o.status,
+      items: o.items.map((i) => ({ name: i.name, quantity: i.quantity })),
+    }));
+  const favoritesMap = new Map<string, number>();
+  for (const o of historyOrders) {
+    for (const it of o.items) {
+      favoritesMap.set(it.name, (favoritesMap.get(it.name) ?? 0) + it.quantity);
+    }
+  }
+  const topFavorites: TopFavoriteEntry[] = [...favoritesMap.entries()]
+    .map(([name, count]) => ({ name, count }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 5);
+
+  // ---------- 0) TRACKING + unpaid order → re-open it for editing ----------
+  // The user asked for changes after the invoice was issued (payment not
+  // completed yet) — rebuild the draft from that order so the invoice becomes
+  // editable again. The stale unpaid order is canceled to avoid duplicates.
+  let restoredFromOrder = false;
+  if (
+    currentStage === "TRACKING" &&
+    latestOrder &&
+    isOrderEditable(latestOrder) &&
+    draft.items.length === 0 &&
+    detectOrderEditIntent(userMessage, categories)
+  ) {
+    const orderItems = await db.orderItem.findMany({ where: { orderId: latestOrder.id } });
+    const menuById = new Map(categories.flatMap((c) => c.items).map((i) => [i.id, i]));
+    const restoredItems = orderItems
+      .filter((oi) => oi.menuItemId && menuById.has(oi.menuItemId))
+      .map((oi) => {
+        const mi = menuById.get(oi.menuItemId!)!;
+        return { itemId: mi.id, name: mi.name, price: mi.price, quantity: Math.max(1, Math.min(30, oi.quantity)) };
+      });
+    if (restoredItems.length > 0) {
+      draft = {
+        items: restoredItems,
+        deliveryMethod: latestOrder.type === "PICKUP" ? "PICKUP" : "DELIVERY",
+        address: latestOrder.address ?? undefined,
+        couponCode: latestOrder.couponCode ?? undefined,
+      };
+      await db.order.update({
+        where: { id: latestOrder.id },
+        data: { status: "CANCELED" },
+      });
+      await db.orderStatusLog.create({
+        data: { orderId: latestOrder.id, status: "CANCELED", note: "بازگشت به ویرایش در هوش نخل — سفارش پرداخت‌نشده بود" },
+      });
+      restoredFromOrder = true;
+    }
+  }
 
   // ---------- 1) Try AI ----------
   let replyText = "";
@@ -490,6 +619,8 @@ export async function processChatMessage(
           type: latestOrder.type,
         }
       : null,
+    orderHistory,
+    topFavorites,
     addressSuggestions: addresses.map((a) => a.fullAddress),
   });
 
@@ -544,18 +675,38 @@ export async function processChatMessage(
     }
   }
 
+  // ---------- 2.2) Explicit tracking intent — from ANY stage ----------
+  // «وضعیت سفارشم رو بگو» باید از هر مرحله‌ای کارت رهگیری بیاورد — حتی وقتی
+  // مدل با متن پاسخ داده و suggestedStage نفرستیده است. موتور بعداً خودش چک
+  // می‌کند سفارشی وجود دارد (وگرنه به مرحلهٔ سفارش برمی‌گردد) و اگر درفت
+  // اقلام دارد (سفارش در جریان) TRACKING به ORDERING بازدهی می‌شود.
+  if (wantsTracking(userMessage) && suggestedStage !== "TRACKING") {
+    suggestedStage = "TRACKING";
+  }
+
   // ---------- 2.5) Anti-hallucination filter + safety net for ADD_ITEM ----------
   const allMenuItems = categories.flatMap((c) => c.items);
   const normUserMsg = normalizePersian(userMessage);
   const normReply = normalizePersian(replyText);
+  // category hints, e.g. «خورشت‌های ایرانی» → «خورشت» — mentioning the category
+  // plus the item's head word («خورشت قیمه» for «قیمه سیب») is explicit intent
+  const categoryHints = categories
+    .map((c) => normalizePersian(c.name).replace(/( های| ها|های|ها)( ایرانی| کرمان)?$/u, "").trim())
+    .filter((h) => h.length >= 3);
   const isMentioned = (itemName: string): boolean => {
     const n = normalizePersian(itemName);
     // strict word-boundary check on the user's own message
     if (includesWord(normUserMsg, n)) return true;
     if (normReply.includes(n)) return true;
-    // token-level fallback (e.g. "کوبیده" for "کباب کوبیده")
     const tokens = n.split(" ").filter((t) => t.length > 2);
-    return tokens.length > 0 && tokens.every((t) => includesWord(normUserMsg, t) || normReply.includes(t));
+    // token-level fallback (e.g. "کوبیده" for "کباب کوبیده")
+    if (tokens.length > 0 && tokens.every((t) => includesWord(normUserMsg, t) || normReply.includes(t))) return true;
+    // head word + a matching category hint («خورشت قیمه» → «قیمه سیب»)
+    const head = tokens[0] ?? "";
+    if (head.length >= 3 && includesWord(normUserMsg, head) && categoryHints.some((h) => includesWord(normUserMsg, h))) {
+      return true;
+    }
+    return false;
   };
 
   actions = actions.filter((a) => {
@@ -565,22 +716,37 @@ export async function processChatMessage(
     return isMentioned(item.name);
   });
 
-  // Safety net: items the user clearly ordered but AI missed → add deterministically
-  // (only while ordering — never during address/confirmation/tracking stages)
-  if (currentStage === "ORDERING" || currentStage === "DRINKS" || currentStage === "GREETING") {
+  // Safety net: items the user clearly ordered/removed but AI missed → merge
+  // deterministically. Runs at EVERY stage — the user may edit the order even
+  // after the invoice was issued (confirmation) or re-open an unpaid order.
+  {
     const det = deterministicParse(userMessage, currentStage, categories, draft);
-    const detAdds = det.actions.filter((a) => a.type === "ADD_ITEM" && a.itemId);
-    const aiAdds = actions.filter((a) => a.type === "ADD_ITEM");
-    const aiNames = new Set(
-      aiAdds
-        .map((a) => resolveActionItem(a, allMenuItems))
+    const aiTouchedIds = new Set(
+      actions
+        .filter((a) => a.type === "ADD_ITEM" || a.type === "REMOVE_ITEM")
+        .map((a) => resolveActionItem(a, allMenuItems)?.id)
         .filter(Boolean)
-        .map((i) => i!.id)
     );
-    const missing = detAdds.filter((a) => !aiNames.has(a.itemId!));
-    if (missing.length > 0) {
-      actions = [...actions, ...missing];
+    for (const a of det.actions) {
+      if (a.type === "ADD_ITEM" && a.itemId && !aiTouchedIds.has(a.itemId)) {
+        actions.push(a);
+      } else if (a.type === "REMOVE_ITEM" && a.itemId && !aiTouchedIds.has(a.itemId)) {
+        actions.push(a);
+      }
     }
+  }
+
+  // ---------- 2.6b) Stage-navigation safety net ----------
+  // The UI step chips send canned navigation messages; guarantee they always
+  // reach the right stage even if the AI model is unavailable or confused.
+  // navForced distinguishes the user's EXPLICIT step choice (chips / «روش
+  // ارسال رو عوض کنم») from the model's own stage suggestions.
+  let navForced = false;
+  const navIntent = detectStageNavIntent(userMessage, draft, categories);
+  if (navIntent && suggestedStage !== navIntent.stage) {
+    suggestedStage = navIntent.stage;
+    navForced = true;
+    if (usedFallback && !replyText.trim()) replyText = navIntent.reply;
   }
 
   // ---------- 2.7) Safety nets for delivery method & address ----------
@@ -591,10 +757,15 @@ export async function processChatMessage(
     const detDelivery = det.actions.find((a) => a.type === "SET_DELIVERY");
     if (detDelivery) {
       actions = [...actions, detDelivery];
-      if (!suggestedStage && det.nextStage) suggestedStage = det.nextStage;
+      // the parser found explicit courier/pickup intent → advance the flow
+      // (its nextStage is more specific than a generic model suggestion)
+      suggestedStage = det.nextStage ?? suggestedStage;
     }
   }
-  if (currentStage === "ADDRESS" && !actions.some((a) => a.type === "SET_ADDRESS")) {
+  if (!actions.some((a) => a.type === "SET_ADDRESS")) {
+    // any stage — the model often confirms the address in text but forgets
+    // the action; the parser's conservative looksLikeAddress guard protects
+    // against false positives (food mentions never count as addresses)
     const det = deterministicParse(userMessage, currentStage, categories, draft);
     const detAddr = det.actions.find((a) => a.type === "SET_ADDRESS");
     if (detAddr) {
@@ -609,7 +780,15 @@ export async function processChatMessage(
   const couponRemove = actions.find((a) => a.type === "REMOVE_COUPON");
   const itemActions = actions.filter((a) => a.type !== "APPLY_COUPON" && a.type !== "REMOVE_COUPON");
 
-  const { draft: newDraft, log, warnings } = applyActions(draft, itemActions, categories, aiSettings.maxItemsPerOrder, allergenPhrases);
+  const { draft: newDraft, log, warnings } = applyActions(
+    draft,
+    itemActions,
+    categories,
+    aiSettings.maxItemsPerOrder,
+    allergenPhrases,
+    // آیتم‌های «فقط شیفت شب» فقط در سرویس شام قابل افزودن‌اند — پیام گیت مشترک با سایت
+    isDinnerShiftNow(general.businessHours) ? null : dinnerOnlyMessage(general.businessHours)
+  );
 
   if (couponRemove) {
     if (newDraft.couponCode) {
@@ -633,11 +812,70 @@ export async function processChatMessage(
   }
 
   // ---------- 4) Stage transition ----------
-  const nextStage = validateStageTransition(currentStage, suggestedStage, newDraft, categories);
+  let nextStage = validateStageTransition(currentStage, suggestedStage, newDraft, categories);
+
+  // A re-opened unpaid order lands directly on the (editable) invoice
+  if (restoredFromOrder && nextStage === "TRACKING") {
+    nextStage =
+      newDraft.items.length === 0
+        ? "ORDERING"
+        : suggestedStage === "ADDRESS" && newDraft.deliveryMethod === "DELIVERY"
+          ? "ADDRESS"
+          : newDraft.deliveryMethod
+            ? "CONFIRMATION"
+            : "DELIVERY_METHOD";
+  }
+
+  // Draft gained items while tracking → the user is ordering again
+  if (!restoredFromOrder && nextStage === "TRACKING" && newDraft.items.length > 0) {
+    nextStage = "ORDERING";
+  }
+
+  // ---------- 4.5) Cashier guarantee ----------
+  // A real cashier always ends at the register: once the draft holds every
+  // required piece (items + delivery method + address for courier), the flow
+  // deterministically lands on the invoice — even if the model forgets to
+  // suggest CONFIRMATION. The invoice box with the pay button is therefore
+  // ALWAYS shown before payment. Explicit backward navigation (step chips /
+  // «روش ارسال رو عوض کنم») is never overridden — the user stays in control.
+  const draftComplete =
+    newDraft.items.length > 0 &&
+    !!newDraft.deliveryMethod &&
+    (newDraft.deliveryMethod === "PICKUP" || (newDraft.address ?? "").trim().length >= 10);
+  // explicit backward = the USER asked for an earlier step (nav chips), or the
+  // model deliberately keeps the flow browsing (ordering/drinks). A model
+  // suggestion of DELIVERY_METHOD/ADDRESS with a complete draft is treated as
+  // forgetfulness and healed to CONFIRMATION — the invoice must always land.
+  // For a re-opened unpaid order even an ORDERING suggestion is healed (the
+  // whole point of the re-open is editing the invoice).
+  const explicitBackward =
+    navForced ||
+    (!restoredFromOrder &&
+      (suggestedStage === "GREETING" || suggestedStage === "ORDERING" || suggestedStage === "DRINKS"));
+  if (
+    draftComplete &&
+    !explicitBackward &&
+    nextStage !== "TRACKING" &&
+    (restoredFromOrder ||
+      nextStage === "DELIVERY_METHOD" ||
+      nextStage === "ADDRESS" ||
+      nextStage === "CONFIRMATION")
+  ) {
+    // a re-opened unpaid order exists precisely to be edited → its invoice
+    // must come back LIVE (with the pay button) right after the edit, even
+    // when the model suggested staying on ORDERING
+    nextStage = "CONFIRMATION";
+  }
 
   // If AI suggested TRACKING but there is no order, force ordering
   if (nextStage === "TRACKING" && !latestOrder) {
+    nextStage = newDraft.items.length > 0 ? "ORDERING" : "GREETING";
     replyText += "\n\n(فعلاً سفارش ثبت‌شده‌ای برای شما پیدا نکردم — بگید چه چیزی میل دارید؟)";
+  }
+
+  // Surface the re-opened order in the reply
+  if (restoredFromOrder && !normalizePersian(replyText).includes("ویرایش")) {
+    replyText = `سفارشتون رو دوباره به حالت ویرایش آوردم ✏️ هر تغییری خواستید بگید یا از دکمه‌های روی فاکتور استفاده کنید — بعد دوباره پرداخت می‌کنیم.\n\n${replyText}`;
   }
 
   // ---------- 5) Build rich metadata ----------
@@ -666,8 +904,15 @@ export async function processChatMessage(
     metadata.menu = await buildMenuPayload(categories, true);
   }
 
-  // Order summary attachment
-  if (nextStage === "CONFIRMATION" && newDraft.items.length > 0) {
+  // Order summary attachment — the invoice shows whenever the flow reaches the
+  // confirmation step OR whenever the user edits the order while an invoice is
+  // already on screen (prices always recomputed server-side)
+  const draftChanged = log.length > 0;
+  const showInvoice =
+    newDraft.items.length > 0 &&
+    newDraft.deliveryMethod != null &&
+    (nextStage === "CONFIRMATION" || (currentStage === "CONFIRMATION" && draftChanged) || restoredFromOrder);
+  if (showInvoice) {
     const summary = await buildOrderSummaryPayload(newDraft, general, userId);
     metadata.orderSummary = summary.payload;
     warnings.push(...summary.warnings);
@@ -693,6 +938,8 @@ export async function processChatMessage(
     data: {
       stage: nextStage,
       draft: JSON.stringify(newDraft),
+      // a re-opened order was canceled — the next payment creates a fresh one
+      ...(restoredFromOrder ? { orderId: null } : {}),
       updatedAt: new Date(),
     },
   });
@@ -704,5 +951,6 @@ export async function processChatMessage(
       metadata,
     },
     stage: nextStage,
+    draft: newDraft,
   };
 }

@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { getSettings, type PaymentSettings } from "@/lib/settings";
 import { zarinpalVerify } from "@/lib/payment/zarinpal";
 import { notifyAdmins, notifyCustomer } from "@/lib/notify";
+import { notifyChatPaymentSuccess, notifyChatPaymentFailed } from "@/lib/chat/payment-chat";
 import { publicUrl } from "@/lib/public-url";
 
 /**
@@ -37,16 +38,22 @@ export async function GET(req: NextRequest) {
     }
 
     if (status !== "OK") {
-      await db.order.update({
+      const failed = await db.order.update({
         where: { id: order.id },
         data: {
           status: "PAYMENT_FAILED",
           paymentStatus: "FAILED",
           paymentError: "پرداخت توسط شما لغو شد یا ناموفق بود",
         },
+        include: { items: true, statusLogs: { orderBy: { createdAt: "asc" } } },
       });
       await db.orderStatusLog.create({
         data: { orderId: order.id, status: "PAYMENT_FAILED", note: "لغو/خطای پرداخت در درگاه" },
+      });
+      await notifyChatPaymentFailed({
+        ...failed,
+        items: failed.items.map((i) => ({ name: i.name, quantity: i.quantity })),
+        statusLogs: [...failed.statusLogs, { status: "PAYMENT_FAILED", createdAt: new Date() }],
       });
       return Response.redirect(publicUrl(req, `/?payment=failed&order=${order.orderNumber}&reason=canceled`), 302);
     }
@@ -56,7 +63,7 @@ export async function GET(req: NextRequest) {
     const verify = await zarinpalVerify(settings, { amountToman: order.total, authority });
 
     if (verify.success) {
-      await db.order.update({
+      const updated = await db.order.update({
         where: { id: order.id },
         data: {
           status: "PAID",
@@ -66,6 +73,7 @@ export async function GET(req: NextRequest) {
           paidAt: new Date(),
           paymentError: null,
         },
+        include: { items: true, statusLogs: { orderBy: { createdAt: "asc" } } },
       });
       await db.orderStatusLog.create({
         data: { orderId: order.id, status: "PAID", note: `پرداخت تأیید شد — کد رهگیری ${verify.refId ?? "-"}` },
@@ -104,19 +112,31 @@ export async function GET(req: NextRequest) {
         from: order.status,
         to: "PAID",
       });
+      // chat verdict: final confirmation + tracking code inside Nakhl AI
+      await notifyChatPaymentSuccess({
+        ...updated,
+        items: updated.items.map((i) => ({ name: i.name, quantity: i.quantity })),
+        statusLogs: [...updated.statusLogs, { status: "PAID", createdAt: new Date() }],
+      });
       return Response.redirect(publicUrl(req, `/?payment=success&order=${order.orderNumber}&ref=${verify.refId ?? ""}`), 302);
     }
 
-    await db.order.update({
+    const failedVerify = await db.order.update({
       where: { id: order.id },
       data: {
         status: "PAYMENT_FAILED",
         paymentStatus: "FAILED",
         paymentError: verify.message ?? "تأیید پرداخت ناموفق بود",
       },
+      include: { items: true, statusLogs: { orderBy: { createdAt: "asc" } } },
     });
     await db.orderStatusLog.create({
       data: { orderId: order.id, status: "PAYMENT_FAILED", note: verify.message ?? "خطای تأیید" },
+    });
+    await notifyChatPaymentFailed({
+      ...failedVerify,
+      items: failedVerify.items.map((i) => ({ name: i.name, quantity: i.quantity })),
+      statusLogs: [...failedVerify.statusLogs, { status: "PAYMENT_FAILED", createdAt: new Date() }],
     });
     return Response.redirect(publicUrl(req, `/?payment=failed&order=${order.orderNumber}&reason=verify`), 302);
   } catch (e) {

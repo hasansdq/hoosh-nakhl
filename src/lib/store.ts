@@ -3,6 +3,7 @@
 import { create } from "zustand";
 import { toast } from "sonner";
 import { api } from "@/lib/client-api";
+import { DEFAULT_BUSINESS_HOURS, type BusinessHours } from "@/lib/hours";
 
 export type ViewName = "home" | "chat" | "cart" | "orders" | "track" | "profile";
 
@@ -52,12 +53,18 @@ export interface MenuItemPublic {
   prepTime: number | null;
   rating?: number | null;
   ratingCount?: number;
+  /** فقط شیفت شب — ارث‌بری از دسته‌بندی (فقط در سرویس شام قابل سفارش) */
+  dinnerOnly?: boolean;
 }
 
 export interface MenuCategoryPublic {
   id: string;
   name: string;
   slug: string;
+  /** کلید آیکون lucide — از مدیریت منو (پنل ادمین) تنظیم می‌شود */
+  icon?: string | null;
+  /** فقط شیفت شب — غذاهای این دسته فقط در سرویس شام قابل سفارش‌اند */
+  dinnerOnly?: boolean;
   items: MenuItemPublic[];
 }
 
@@ -69,6 +76,8 @@ export interface SiteSettings {
   phone: string;
   email: string;
   workingHours: string;
+  /** ساعات کاری ساختاریافته (ناهار/شام) — مبنای بج باز/بسته و گیت سفارش */
+  businessHours: BusinessHours;
   city: string;
   instagram: string;
   telegram: string;
@@ -85,7 +94,8 @@ export const DEFAULT_SITE_SETTINGS: SiteSettings = {
   address: "رفسنجان، بلوار شهید مطهری، نبش کوچه نخل، پلاک ۱۲",
   phone: "03434300000",
   email: "",
-  workingHours: "همه روزه از ساعت ۱۲ ظهر تا ۱۲ شب",
+  workingHours: "ناهار ۱۲:۰۰ تا ۱۶:۰۰ • شام ۱۹:۰۰ تا ۲۴:۰۰",
+  businessHours: DEFAULT_BUSINESS_HOURS,
   city: "رفسنجان",
   instagram: "nakhl.rafsanjan",
   telegram: "nakhl_restaurant",

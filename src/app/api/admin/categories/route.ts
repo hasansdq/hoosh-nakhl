@@ -30,6 +30,11 @@ export async function GET() {
         icon: c.icon,
         sortOrder: c.sortOrder,
         isActive: c.isActive,
+        // فقط شیفت شب — غذاهای این دسته فقط در سرویس شام قابل سفارش‌اند
+        dinnerOnly: c.dinnerOnly,
+        // اتصال به نرم‌افزار باران — برای نمایش بج/هشدار در پنل مدیریت
+        baranGroupId: c.baranGroupId,
+        baranMainGroupId: c.baranMainGroupId,
         itemsCount: c._count.items,
       })),
     });
@@ -54,12 +59,14 @@ export async function POST(req: NextRequest) {
         icon: parsed.data.icon || null,
         sortOrder: parsed.data.sortOrder ?? 99,
         isActive: parsed.data.isActive ?? true,
+        dinnerOnly: parsed.data.dinnerOnly ?? false,
       },
     });
 
     await logAudit(session.admin.username, "CATEGORY_CREATED", {
       entity: "category",
       entityId: category.id,
+      detail: { name: category.name, icon: category.icon, sortOrder: category.sortOrder },
       ip: getClientIp(req),
     });
     return ok({ category });

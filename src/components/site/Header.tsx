@@ -21,6 +21,12 @@ import { useContent } from "@/lib/use-content";
 import { Bot, Menu as MenuIcon, User as UserIcon, Package, PackageSearch, ShoppingCart, LogOut, Sparkles, Phone, Clock, LayoutDashboard, Instagram, ChevronLeft } from "lucide-react";
 import { formatPhone, toPersianDigits } from "@/lib/fa";
 import { fullName, api } from "@/lib/client-api";
+import {
+  describeBusinessHours,
+  nowMinutesInRestaurantTz,
+  openStatusText,
+  type BusinessHours,
+} from "@/lib/hours";
 
 const NAV_ITEMS: { key: ViewName; label: string; icon: React.ElementType }[] = [
   { key: "home", label: "خانه", icon: MenuIcon },
@@ -38,6 +44,40 @@ export function prettyPhone(raw: string): string {
     return toPersianDigits(`${digits.slice(0, 3)}-${digits.slice(3)}`);
   }
   return toPersianDigits(raw);
+}
+
+/**
+ * بج زندهٔ وضعیت رستوران — «الان باز است / الان بسته است» بر اساس
+ * ساعات کاری ساختاریافته (ناهار/شام) از تنظیمات CMS؛ به وقت رسمی ایران،
+ * هر ۳۰ ثانیه تازه می‌شود؛ tooltip ساعات کامل و لحظهٔ باز شدن بعدی را می‌گوید.
+ */
+function OpenStatusBadge({ businessHours }: { businessHours: BusinessHours }) {
+  const [nowMin, setNowMin] = useState(() => nowMinutesInRestaurantTz());
+
+  useEffect(() => {
+    const t = window.setInterval(() => setNowMin(nowMinutesInRestaurantTz()), 30_000);
+    return () => window.clearInterval(t);
+  }, []);
+
+  const status = openStatusText(businessHours, nowMin);
+
+  return (
+    <span
+      role="status"
+      title={`${status.label} — ${status.detail} • ${describeBusinessHours(businessHours)} (به وقت ایران)`}
+      className={`flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-black leading-4 transition-colors ${
+        status.open
+          ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400"
+          : "bg-rose-500/15 text-rose-700 dark:text-rose-400"
+      }`}
+    >
+      <span className="relative flex h-1.5 w-1.5">
+        <span className={`absolute inline-flex h-full w-full animate-ping rounded-full opacity-60 ${status.open ? "bg-emerald-500" : "bg-rose-500"}`} />
+        <span className={`relative inline-flex h-1.5 w-1.5 rounded-full ${status.open ? "bg-emerald-500" : "bg-rose-500"}`} />
+      </span>
+      {status.label}
+    </span>
+  );
 }
 
 export function NakhlLogo({ size = 40 }: { size?: number }) {
@@ -156,9 +196,12 @@ export function SiteHeader() {
               </a>
             )}
             <span className="opacity-40">|</span>
-            <span className="flex items-center gap-1">
-              <Clock className="h-3.5 w-3.5 text-gold/90" />
-              {siteSettings.workingHours}
+            <span className="flex items-center gap-1.5">
+              <OpenStatusBadge businessHours={siteSettings.businessHours} />
+              <span className="hidden items-center gap-1 sm:flex">
+                <Clock className="h-3.5 w-3.5 text-gold/90" />
+                {siteSettings.workingHours}
+              </span>
             </span>
           </motion.span>
         </div>

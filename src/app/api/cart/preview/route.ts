@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { db } from "@/lib/db";
 import { ok, fail, requireUser } from "@/lib/api";
 import { getSettings, type GeneralSettings } from "@/lib/settings";
+import { isDinnerShiftNow } from "@/lib/hours";
 import { computePricing } from "@/lib/chat/engine";
 import { checkCoupon } from "@/lib/coupons";
 
@@ -38,7 +39,12 @@ export async function POST(req: NextRequest) {
     // ---- authoritative validation against DB ----
     const ids = [...seen.keys()];
     const menuItems =
-      ids.length > 0 ? await db.menuItem.findMany({ where: { id: { in: ids } } }) : [];
+      ids.length > 0
+        ? await db.menuItem.findMany({
+            where: { id: { in: ids } },
+            include: { category: { select: { dinnerOnly: true } } },
+          })
+        : [];
 
     const items: {
       itemId: string;
@@ -67,6 +73,13 @@ export async function POST(req: NextRequest) {
     }
 
     const general = await getSettings<GeneralSettings>("general");
+
+    // ---- آیتم‌های «فقط شیفت شب» وقتی شیفت شب باز نیست (نمایش هشدار در فاکتور سبد) ----
+    const shiftBlockedItems = isDinnerShiftNow(general.businessHours)
+      ? []
+      : menuItems
+          .filter((mi) => mi.category.dinnerOnly && seen.has(mi.id))
+          .map((mi) => ({ itemId: mi.id, name: mi.name }));
 
     // ---- coupon: SOFT check (invalid coupon never fails the preview) ----
     let couponValid = false;
@@ -105,6 +118,7 @@ export async function POST(req: NextRequest) {
     return ok({
       items,
       unavailableItems,
+      shiftBlockedItems,
       ...pricing,
       couponValid,
       couponCode: appliedCouponCode,

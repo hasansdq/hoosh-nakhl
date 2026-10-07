@@ -23,32 +23,30 @@ import { spawn } from "node:child_process";
 import { open as openFile, readFile, writeFile } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import { connect } from "node:net";
+import { randomBytes } from "node:crypto";
 import { Server, type Socket } from "socket.io";
 
 const PORT = 3003; // hardcoded — the Caddy gateway expects this port
 
 /**
  * Shared secret resolution — keeps this service in sync with the Next backend
- * (which reads the same value from the repo .env through Next.js env loading):
+ * (which reads the same value through the Miniflare dev context):
  *   1. ADMIN_NOTIFY_KEY env (explicit),
- *   2. the `ADMIN_NOTIFY_KEY=` line in the repo's .env — the SAME file
- *      `next dev` loads, so both sides always share one key.
+ *   2. the `vars.ADMIN_NOTIFY_KEY` value in the repo's wrangler.jsonc — the
+ *      SAME key the local Miniflare dev bindings expose to Next dev.
  * Without (2), sandbox-dev emits were silently rejected (key mismatch).
  */
 function resolveAdminKey(): string {
   if (process.env.ADMIN_NOTIFY_KEY) return process.env.ADMIN_NOTIFY_KEY;
   try {
-    // ../../.env relative to mini-services/notify-service/index.ts
-    const envFile = readFileSync(new URL("../../.env", import.meta.url), "utf8");
-    const m = envFile.match(/^ADMIN_NOTIFY_KEY\s*=\s*(.+)$/m);
-    if (m) {
-      const key = m[1].trim().replace(/^["']|["']$/g, "");
-      if (key.length >= 16) return key;
-    }
+    // ../../wrangler.jsonc relative to mini-services/notify-service/index.ts
+    const wrangler = readFileSync(new URL("../../wrangler.jsonc", import.meta.url), "utf8");
+    const m = wrangler.match(/"ADMIN_NOTIFY_KEY"\s*:\s*"([^"]+)"/);
+    if (m && m[1].length >= 16) return m[1];
   } catch {
-    /* no .env next to the service — fall through */
+    /* no wrangler.jsonc next to the service — fall through */
   }
-  return "nakhl-notify-2024"; // legacy sandbox default (localhost-only dev)
+  return randomBytes(32).toString("hex"); // unconfigured service fails closed
 }
 const ADMIN_KEY = resolveAdminKey();
 const ADMINS_ROOM = "admins";
@@ -226,7 +224,7 @@ httpServer.on("request", (req: IncomingMessage, res: ServerResponse) => {
 httpServer.listen(PORT, () => {
   console.log(`[notify] service listening on port ${PORT} (socket.io path "/")`);
   console.log(
-    `[notify] POST /emit ready — key source: ${process.env.ADMIN_NOTIFY_KEY ? "ADMIN_NOTIFY_KEY env" : ADMIN_KEY === "nakhl-notify-2024" ? "legacy default (dev only)" : "repo .env (dev-preview)"}`,
+    `[notify] POST /emit ready — key source: ${process.env.ADMIN_NOTIFY_KEY ? "ADMIN_NOTIFY_KEY env" : "dev configuration or ephemeral fallback"}`,
   );
 });
 

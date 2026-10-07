@@ -12,12 +12,8 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
-import { formatToman, toPersianDigits, toJalali, jalaliMonthName, weekdayName } from "@/lib/fa";
-import {
-  SCHEDULE_SLOT_TIMES,
-  isSlotSelectable,
-  formatScheduleFa,
-} from "@/lib/schedule";
+import { formatToman, toPersianDigits } from "@/lib/fa";
+import { describeBusinessHours, dinnerOnlyMessage, nowMinutesInRestaurantTz, openStatusText } from "@/lib/hours";
 import { toast } from "sonner";
 import {
   ShoppingCart,
@@ -36,8 +32,7 @@ import {
   LogIn,
   Bot,
   BadgePercent,
-  CalendarClock,
-  Zap,
+  Moon,
 } from "lucide-react";
 
 // ============ types ============
@@ -45,6 +40,8 @@ import {
 interface CartPreviewData {
   items: { itemId: string; name: string; imageUrl: string | null; unitPrice: number; quantity: number; lineTotal: number }[];
   unavailableItems: { itemId: string; name: string }[];
+  /** آیتم‌های «فقط شیفت شب» وقتی شیفت شب باز نیست — گیت نرم برای نمایش هشدار */
+  shiftBlockedItems?: { itemId: string; name: string }[];
   subtotal: number;
   deliveryFee: number;
   taxPercent: number;
@@ -79,25 +76,16 @@ interface SavedAddress {
   isDefault: boolean;
 }
 
-/** اختلاف روز تقویمی بین دو تاریخ (بر اساس روز شروع) */
-function dayOffsetOf(date: Date, from: Date): number {
-  const a = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
-  const b = new Date(from.getFullYear(), from.getMonth(), from.getDate()).getTime();
-  return Math.round((a - b) / 86_400_000);
-}
-
 // ============ view ============
 
 export function CartView() {
-  const { user, setAuthOpen, setView, setPaymentSimulation } = useAppStore();
+  const { user, setAuthOpen, setView, setPaymentSimulation, siteSettings } = useAppStore();
   const hydrated = useCartHydrated();
 
   const items = useCartStore((s) => s.items);
   const deliveryMethod = useCartStore((s) => s.deliveryMethod);
   const address = useCartStore((s) => s.address);
   const couponCode = useCartStore((s) => s.couponCode);
-  const scheduleMode = useCartStore((s) => s.scheduleMode);
-  const scheduledFor = useCartStore((s) => s.scheduledFor);
   const incrementItem = useCartStore((s) => s.incrementItem);
   const decrementItem = useCartStore((s) => s.decrementItem);
   const removeItem = useCartStore((s) => s.removeItem);
@@ -105,82 +93,19 @@ export function CartView() {
   const setDeliveryMethod = useCartStore((s) => s.setDeliveryMethod);
   const setAddress = useCartStore((s) => s.setAddress);
   const setCouponCode = useCartStore((s) => s.setCouponCode);
-  const setScheduleMode = useCartStore((s) => s.setScheduleMode);
-  const setScheduledFor = useCartStore((s) => s.setScheduledFor);
   const clearCart = useCartStore((s) => s.clearCart);
 
   const count = hydrated ? cartTotalCount(items) : 0;
   const localSubtotal = hydrated ? cartSubtotal(items) : 0;
 
-  // ---- پیش‌سفارش: ساعت جاری (هر ۶۰ ثانیه رفرش می‌شود تا چیپ‌های غیرفعال دقیق بمانند) ----
-  const [now, setNow] = useState<Date>(() => new Date());
+  // ---- وضعیت باز/بستهٔ رستوران (به وقت ایران، هر ۳۰ ثانیه) — گیت ثبت سفارش ----
+  const [nowMinTz, setNowMinTz] = useState(() => nowMinutesInRestaurantTz());
   useEffect(() => {
-    const t = setInterval(() => setNow(new Date()), 60_000);
-    return () => clearInterval(t);
+    const t = window.setInterval(() => setNowMinTz(nowMinutesInRestaurantTz()), 30_000);
+    return () => window.clearInterval(t);
   }, []);
-
-  // روز انتخاب‌شده با کلیک (null = از scheduledFor استخراج شود یا پیش‌فرض امروز)
-  const [pickedDay, setPickedDay] = useState<number | null>(null);
-
-  const scheduleActive = scheduleMode === "SCHEDULED" && !!scheduledFor;
-
-  // چیپ‌های روز: امروز / فردا / پس‌فردا / نام روز هفته — تا ۷ روز آینده (۸ گزینه)
-  const dayChips = useMemo(() => {
-    const base = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    return Array.from({ length: 8 }, (_, offset) => {
-      const d = new Date(base.getFullYear(), base.getMonth(), base.getDate() + offset);
-      const { jd, jm } = toJalali(d);
-      const anySelectable = SCHEDULE_SLOT_TIMES.some((t) => {
-        const [h, m] = t.split(":").map(Number);
-        return isSlotSelectable(new Date(d.getFullYear(), d.getMonth(), d.getDate(), h, m), now);
-      });
-      return {
-        offset,
-        label: offset === 0 ? "امروز" : offset === 1 ? "فردا" : offset === 2 ? "پس‌فردا" : weekdayName(d),
-        sub: `${toPersianDigits(jd)} ${jalaliMonthName(jm)}`,
-        anySelectable,
-      };
-    });
-  }, [now]);
-
-  // روز انتخاب‌شده: کلیک کاربر > استخراج از scheduledFor > پیش‌فرض امروز
-  const selectedDayOffset = useMemo(() => {
-    if (pickedDay !== null) return pickedDay;
-    if (!scheduledFor) return 0;
-    const d = new Date(scheduledFor);
-    if (isNaN(d.getTime())) return 0;
-    const a = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
-    const b = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-    const diff = Math.round((a - b) / 86_400_000);
-    return diff >= 0 && diff <= 7 ? diff : 0;
-  }, [pickedDay, scheduledFor, now]);
-
-  // شیارهای ۳۰ دقیقه‌ای روز انتخاب‌شده (۱۲:۰۰ تا ۲۳:۳۰)
-  const daySlots = useMemo(() => {
-    const base = new Date(now.getFullYear(), now.getMonth(), now.getDate() + selectedDayOffset);
-    return SCHEDULE_SLOT_TIMES.map((t) => {
-      const [h, m] = t.split(":").map(Number);
-      const date = new Date(base.getFullYear(), base.getMonth(), base.getDate(), h, m, 0, 0);
-      return { key: t, label: toPersianDigits(t), date, selectable: isSlotSelectable(date, now) };
-    });
-  }, [now, selectedDayOffset]);
-
-  const selectedSlotKey = useMemo(() => {
-    if (!scheduledFor) return null;
-    const d = new Date(scheduledFor);
-    if (isNaN(d.getTime())) return null;
-    return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
-  }, [scheduledFor]);
-
-  const selectScheduleDay = (offset: number) => {
-    setPickedDay(offset);
-    setScheduledFor(null); // تغییر روز → پاک شدن ساعت قبلی
-  };
-
-  const selectScheduleSlot = (slot: { date: Date }) => {
-    setPickedDay(null); // از این پس روز از خود scheduledFor استخراج می‌شود
-    setScheduledFor(slot.date.toISOString());
-  };
+  const closedStatus = openStatusText(siteSettings.businessHours, nowMinTz);
+  const restaurantClosed = !closedStatus.open;
 
   // ---- saved addresses (logged-in; chips render only when user is present) ----
   const [addresses, setAddresses] = useState<SavedAddress[]>([]);
@@ -216,6 +141,10 @@ export function CartView() {
   const fetching = previewFetching;
   const stale = previewKey !== requestKey && previewRequest.items.length > 0;
   const recompute = fetching || stale; // subtle shimmer while server recomputes
+
+  // ---- آیتم‌های «فقط شیفت شب» در سبد — وقتی شیفت شب باز نیست ثبت سفارش ممکن نیست ----
+  const shiftBlockedItems = preview?.shiftBlockedItems ?? [];
+  const hasShiftBlocked = shiftBlockedItems.length > 0;
 
   const fetchPreview = useCallback(async (payload: typeof previewRequest, key: string) => {
     const id = ++reqIdRef.current;
@@ -257,7 +186,6 @@ export function CartView() {
   const [checkingOut, setCheckingOut] = useState(false);
 
   const addressTooShort = deliveryMethod === "DELIVERY" && address.trim().length < 10;
-  const scheduleIncomplete = scheduleMode === "SCHEDULED" && !scheduledFor;
   const payDisabled =
     !user ||
     checkingOut ||
@@ -265,7 +193,8 @@ export function CartView() {
     !preview ||
     recompute ||
     addressTooShort ||
-    scheduleIncomplete ||
+    hasShiftBlocked ||
+    restaurantClosed ||
     !!preview.belowMinOrder;
 
   const checkout = async () => {
@@ -273,20 +202,21 @@ export function CartView() {
       setAuthOpen(true, "cart");
       return;
     }
+    if (restaurantClosed) {
+      toast.error(`رستوران الان بسته است! ${closedStatus.detail}`);
+      return;
+    }
+    if (hasShiftBlocked) {
+      toast.error(`${dinnerOnlyMessage(siteSettings.businessHours)} — ${shiftBlockedItems.map((i) => i.name).join("، ")}`);
+      return;
+    }
     if (addressTooShort) {
       toast.error("برای ارسال با پیک، لطفاً آدرس کامل را وارد کنید");
       return;
     }
-    if (scheduleIncomplete) {
-      toast.error("برای پیش‌سفارش، ابتدا روز و ساعت تحویل را انتخاب کنید");
-      return;
-    }
     setCheckingOut(true);
     const res = await api<CartCheckoutResult>("/api/cart/checkout", {
-      body: {
-        ...previewRequest,
-        scheduledFor: scheduleActive ? (scheduledFor as string) : undefined,
-      },
+      body: { ...previewRequest },
     });
     setCheckingOut(false);
 
@@ -295,7 +225,17 @@ export function CartView() {
       return;
     }
 
+    // اگر بخشی از این سبد از «هوش نخل» آینه شده بود، درفت چت را هم سرور-سمت
+    // خالی می‌کنیم تا فاکتور چتِ همان اقلام دوباره قابل پرداخت نباشد (ضد سفارش تکراری)
+    const cartSnapshot = useCartStore.getState();
+    const paidIds = new Set(items.map((i) => i.itemId));
+    const mirroredPaid = cartSnapshot.chatItemIds.filter((id) => paidIds.has(id));
+
     clearCart(); // order created → empty the cart
+
+    if (mirroredPaid.length > 0) {
+      void api("/api/chat/draft", { body: { op: "CLEAR" } }).catch(() => null);
+    }
 
     if (res.simulated) {
       setPaymentSimulation({
@@ -304,7 +244,7 @@ export function CartView() {
         total: res.total,
       });
     } else if (res.paymentUrl) {
-      window.location.href = res.paymentUrl;
+      window.location.assign(res.paymentUrl);
     } else {
       toast.error("آدرس درگاه دریافت نشد");
     }
@@ -525,152 +465,6 @@ export function CartView() {
               </div>
             </Card>
 
-            {/* delivery timing — پیش‌سفارش / زمان‌بندی */}
-            <Card className="gap-0 rounded-2xl p-4 shadow-sm sm:p-5">
-              <div className="mb-3 flex items-center gap-2 text-sm font-extrabold">
-                <CalendarClock className="h-4.5 w-4.5 text-gold" />
-                زمان تحویل سفارش
-              </div>
-              <div className="grid grid-cols-2 gap-3" role="radiogroup" aria-label="زمان تحویل">
-                <button
-                  type="button"
-                  role="radio"
-                  aria-checked={scheduleMode === "ASAP"}
-                  onClick={() => setScheduleMode("ASAP")}
-                  className={`rounded-2xl border-2 p-4 text-right transition-all ${
-                    scheduleMode === "ASAP"
-                      ? "border-primary bg-primary/5 shadow-md shadow-primary/10"
-                      : "border-border bg-card hover:border-primary/30"
-                  }`}
-                >
-                  <div className="flex items-center gap-2 font-extrabold">
-                    <span
-                      className={`flex h-9 w-9 items-center justify-center rounded-xl ${
-                        scheduleMode === "ASAP" ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"
-                      }`}
-                    >
-                      <Zap className="h-4.5 w-4.5" />
-                    </span>
-                    ارسال همین حالا ⚡
-                  </div>
-                  <div className="mt-1.5 text-[11px] font-semibold text-muted-foreground">
-                    آماده‌سازی و ارسال پس از پرداخت
-                  </div>
-                </button>
-                <button
-                  type="button"
-                  role="radio"
-                  aria-checked={scheduleMode === "SCHEDULED"}
-                  onClick={() => setScheduleMode("SCHEDULED")}
-                  className={`rounded-2xl border-2 p-4 text-right transition-all ${
-                    scheduleMode === "SCHEDULED"
-                      ? "border-gold bg-gold/5 shadow-md shadow-gold/20"
-                      : "border-border bg-card hover:border-gold/40"
-                  }`}
-                >
-                  <div className="flex items-center gap-2 font-extrabold">
-                    <span
-                      className={`flex h-9 w-9 items-center justify-center rounded-xl ${
-                        scheduleMode === "SCHEDULED" ? "bg-gold text-white" : "bg-muted text-muted-foreground"
-                      }`}
-                    >
-                      <CalendarClock className="h-4.5 w-4.5" />
-                    </span>
-                    زمان‌بندی برای بعد 🗓️
-                  </div>
-                  <div className="mt-1.5 text-[11px] font-semibold text-gold-foreground">
-                    پیش‌سفارش از امروز تا ۷ روز آینده
-                  </div>
-                </button>
-              </div>
-
-              {scheduleMode === "SCHEDULED" && (
-                <div className="mt-4 space-y-4 rounded-2xl border border-gold/25 bg-gold/5 p-3.5">
-                  {/* روز تحویل */}
-                  <div>
-                    <div className="mb-2 text-[11px] font-bold text-muted-foreground">روز تحویل:</div>
-                    <div className="grid grid-cols-4 gap-2">
-                      {dayChips.map((c) => (
-                        <button
-                          key={c.offset}
-                          type="button"
-                          disabled={!c.anySelectable}
-                          onClick={() => selectScheduleDay(c.offset)}
-                          aria-pressed={selectedDayOffset === c.offset}
-                          className={`rounded-xl border px-2 py-2 text-center transition-all ${
-                            selectedDayOffset === c.offset
-                              ? "border-primary bg-primary text-primary-foreground shadow-md shadow-primary/20"
-                              : c.anySelectable
-                                ? "border-border bg-card hover:border-primary/40"
-                                : "cursor-not-allowed border-border/60 bg-muted text-muted-foreground/50"
-                          }`}
-                        >
-                          <span
-                            className={`block text-xs font-extrabold ${
-                              selectedDayOffset !== c.offset && !c.anySelectable ? "line-through" : ""
-                            }`}
-                          >
-                            {c.label}
-                          </span>
-                          <span
-                            className={`mt-0.5 block text-[10px] ${
-                              selectedDayOffset === c.offset ? "text-primary-foreground/80" : "text-muted-foreground"
-                            }`}
-                          >
-                            {c.sub}
-                          </span>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* ساعت تحویل */}
-                  <div>
-                    <div className="mb-2 text-[11px] font-bold text-muted-foreground">
-                      ساعت تحویل (۱۲ ظهر تا ۱۲ شب):
-                    </div>
-                    <div className="grid max-h-56 grid-cols-4 gap-2 overflow-y-auto pl-1 sm:grid-cols-6">
-                      {daySlots.map((s) => {
-                        const selected = selectedSlotKey === s.key && selectedDayOffset === dayOffsetOf(s.date, now);
-                        return (
-                          <button
-                            key={s.key}
-                            type="button"
-                            disabled={!s.selectable}
-                            onClick={() => selectScheduleSlot(s)}
-                            aria-pressed={selected}
-                            title={!s.selectable ? "این زمان دیگر قابل انتخاب نیست" : `تحویل ${s.label}`}
-                            className={`rounded-xl border px-1 py-2 text-xs font-extrabold transition-all ${
-                              selected
-                                ? "border-primary bg-primary text-primary-foreground shadow-md shadow-primary/20"
-                                : s.selectable
-                                  ? "border-border bg-card hover:border-primary/40"
-                                  : "cursor-not-allowed border-border/60 bg-muted text-muted-foreground/50 line-through"
-                            }`}
-                          >
-                            {s.label}
-                          </button>
-                        );
-                      })}
-                    </div>
-                    <p className="mt-1.5 text-[10px] leading-5 text-muted-foreground">
-                      ساعات خط‌خورده گذشته‌اند یا کمتر از ۴۵ دقیقه فاصله دارند.
-                    </p>
-                  </div>
-
-                  {scheduleActive && scheduledFor && (
-                    <div
-                      className="flex items-center gap-1.5 rounded-xl bg-gold/15 px-3 py-2 text-xs font-bold text-gold-foreground"
-                      role="status"
-                    >
-                      <CalendarClock className="h-4 w-4 shrink-0" />
-                      سفارش شما برای {formatScheduleFa(scheduledFor, now)} ثبت و تحویل می‌شود
-                    </div>
-                  )}
-                </div>
-              )}
-            </Card>
-
             {/* address (delivery only) */}
             {deliveryMethod === "DELIVERY" && (
               <Card className="gap-0 rounded-2xl p-4 shadow-sm sm:p-5">
@@ -835,22 +629,18 @@ export function CartView() {
                             )}
                           </div>
                         )}
-                        {scheduleActive && scheduledFor && (
-                          <div className="flex items-center justify-between rounded-lg bg-gold/15 px-2 py-1.5 font-bold text-gold-foreground">
-                            <span className="flex items-center gap-1">
-                              <CalendarClock className="h-4 w-4 shrink-0" />
-                              زمان تحویل
-                            </span>
-                            <span>{formatScheduleFa(scheduledFor, now)}</span>
-                          </div>
-                        )}
-                        {scheduleIncomplete && (
+                        {hasShiftBlocked && (
                           <div
-                            className="flex items-center gap-1.5 rounded-lg bg-amber-500/10 px-2 py-1.5 text-[11px] font-bold text-amber-700 dark:text-amber-400"
+                            className="mt-2 space-y-1 rounded-xl border border-gold/30 bg-gold/10 px-3 py-2.5 text-[11px] font-bold leading-5 text-gold-foreground"
                             role="alert"
                           >
-                            <TriangleAlert className="h-3.5 w-3.5 shrink-0" />
-                            برای پیش‌سفارش، روز و ساعت تحویل را انتخاب کنید
+                            <span className="flex items-center gap-1.5">
+                              <Moon className="h-4 w-4 shrink-0" />
+                              {dinnerOnlyMessage(siteSettings.businessHours)}
+                            </span>
+                            <span className="block font-normal text-muted-foreground">
+                              اقلام شیفت شب در سبد: {shiftBlockedItems.map((i) => i.name).join("، ")} — لطفاً آن‌ها را حذف کنید یا در سرویس شام دوباره سفارش دهید.
+                            </span>
                           </div>
                         )}
                         <div className="flex justify-between text-muted-foreground">
@@ -871,18 +661,43 @@ export function CartView() {
                             حداقل مبلغ سفارش {formatToman(preview.minOrderAmount)} است؛ چند قلم دیگر اضافه کنید.
                           </div>
                         )}
+                        {restaurantClosed && (
+                          <div
+                            className="mt-2 space-y-1 rounded-xl border border-rose-500/25 bg-rose-500/10 px-3 py-2.5 text-[11px] font-bold leading-5 text-rose-700 dark:text-rose-400"
+                            role="alert"
+                          >
+                            <span className="flex items-center gap-1.5">
+                              <Store className="h-4 w-4 shrink-0" />
+                              رستوران الان بسته است! {closedStatus.detail}
+                            </span>
+                            <span className="block font-normal text-muted-foreground">
+                              سبد شما حفظ می‌شود — در ساعات کاری ({describeBusinessHours(siteSettings.businessHours)}) می‌توانید پرداخت را کامل کنید.
+                            </span>
+                          </div>
+                        )}
                         <Button
                           onClick={checkout}
                           disabled={payDisabled}
                           size="lg"
                           className="mt-3 h-13 w-full rounded-xl py-3.5 text-base font-extrabold shadow-lg shadow-primary/25"
+                          title={
+                            restaurantClosed
+                              ? `رستوران الان بسته است — ${closedStatus.detail}`
+                              : hasShiftBlocked
+                                ? dinnerOnlyMessage(siteSettings.businessHours)
+                                : undefined
+                          }
                         >
                           {checkingOut ? (
                             <Loader2 className="ml-2 h-5 w-5 animate-spin" />
                           ) : (
                             <CreditCard className="ml-2 h-5 w-5" />
                           )}
-                          پرداخت و ثبت سفارش ({formatToman(preview.total)})
+                          {restaurantClosed
+                            ? "سفارش‌گیری در ساعات کاری فعال است"
+                            : hasShiftBlocked
+                              ? "اقلام شیفت شب — در سرویس شام سفارش دهید"
+                              : `پرداخت و ثبت سفارش (${formatToman(preview.total)})`}
                         </Button>
                         <p className="mt-2 flex items-center justify-center gap-1 text-center text-[11px] text-muted-foreground">
                           {preview.couponCode && preview.couponValid ? (
@@ -915,15 +730,6 @@ export function CartView() {
                         <span>جمع اقلام سبد</span>
                         <span>{formatToman(localSubtotal)}</span>
                       </div>
-                      {scheduleActive && scheduledFor && (
-                        <div className="flex items-center justify-between rounded-lg bg-gold/15 px-2 py-1.5 font-bold text-gold-foreground">
-                          <span className="flex items-center gap-1">
-                            <CalendarClock className="h-4 w-4 shrink-0" />
-                            زمان تحویل
-                          </span>
-                          <span>{formatScheduleFa(scheduledFor, now)}</span>
-                        </div>
-                      )}
                       <p className="mt-2 rounded-xl bg-muted/60 px-3 py-2 text-[11px] leading-6 text-muted-foreground">
                         هزینه پیک، مالیات ارزش افزوده و تخفیف کد، پس از ورود به حساب به‌صورت دقیق محاسبه می‌شود.
                       </p>

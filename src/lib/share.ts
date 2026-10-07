@@ -17,7 +17,6 @@ export interface ShareOrderData {
   total: number;
   paymentRef?: string | null;
   createdAt?: string;
-  scheduledFor?: string | null;
   items: { name: string; quantity: number }[];
 }
 

@@ -1,4 +1,10 @@
 import { db } from "@/lib/db";
+import {
+  DEFAULT_BUSINESS_HOURS,
+  describeBusinessHours,
+  normalizeBusinessHours,
+  type BusinessHours,
+} from "@/lib/hours";
 
 // ============ Settings type definitions ============
 
@@ -57,7 +63,10 @@ export interface GeneralSettings {
   address: string;
   phone: string;
   email: string;
+  /** متن نمایشی ساعات کاری — همیشه از businessHours مشتق می‌شود (نوشتن دستی حذف شد) */
   workingHours: string;
+  /** ساعات کاری ساختاریافته: ناهار و شام — مبنای بج «الان باز/بسته» و گیت سفارش */
+  businessHours: BusinessHours;
   taxPercent: number; // VAT percent (10)
   deliveryFee: number; // Toman
   minOrderAmount: number;
@@ -139,7 +148,8 @@ export const DEFAULT_GENERAL_SETTINGS: GeneralSettings = {
   address: "رفسنجان، بلوار شهید مطهری، نبش کوچه نخل، پلاک ۱۲",
   phone: "03434300000",
   email: "info@nakhl-rafsanjan.ir",
-  workingHours: "همه روزه از ساعت ۱۲ ظهر تا ۱۲ شب",
+  workingHours: "ناهار ۱۲:۰۰ تا ۱۶:۰۰ • شام ۱۹:۰۰ تا ۲۴:۰۰",
+  businessHours: DEFAULT_BUSINESS_HOURS,
   taxPercent: 10,
   deliveryFee: 35000,
   minOrderAmount: 100000,
@@ -203,17 +213,25 @@ export async function getSettings<T extends AnySettings>(group: SettingsGroup): 
     // Invariant: callers instantiate T as the settings type that matches
     // `group` (ai→AISettings, sms→SMSSettings, …) — this cast is the single
     // union→generic boundary of the settings API.
-    return deepMerge(defaults, cached.data as Partial<T>) as T;
+    return postProcess(group, deepMerge(defaults, cached.data as Partial<T>) as unknown as Record<string, unknown>) as T;
   }
 
   try {
     const row = await db.setting.findUnique({ where: { key: group } });
     const parsed = row ? (JSON.parse(row.value) as Record<string, unknown>) : {};
     cache.set(group, { data: parsed, loadedAt: Date.now() });
-    return deepMerge(defaults, parsed as Partial<T>) as T;
+    return postProcess(group, deepMerge(defaults, parsed as Partial<T>) as unknown as Record<string, unknown>) as T;
   } catch {
     return defaults as T;
   }
+}
+
+/** مشتق‌سازی بعد از خواندن: متن workingHours همیشه از بازه‌های ساختاریافته ساخته می‌شود
+ *  (مقدار متنِ ذخیره‌شدهٔ قدیمی نادیده گرفته می‌شود) */
+function postProcess(group: SettingsGroup, merged: Record<string, unknown>): unknown {
+  if (group !== "general") return merged;
+  const hours = normalizeBusinessHours(merged.businessHours);
+  return { ...merged, businessHours: hours, workingHours: describeBusinessHours(hours) };
 }
 
 export async function saveSettings(

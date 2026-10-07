@@ -11,8 +11,8 @@
  *     HTTP server for the realtime channel.
  *
  *  2. Realtime channel: socket.io mounted at `/api/ws` implementing the
- *     EXACT application protocol of the sandbox notify-service
- *     (rooms `admins` and `customer:NK-XXXX`, `admin-join`
+ *     EXACT application protocol of the NakhlRealtime Durable Object /
+ *     notify-service (rooms `admins` and `customer:NK-XXXX`, `admin-join`
  *     { key } shared-secret handshake, `customer-join` { orderNumber }).
  *     The browser bundle is baked at build time with
  *     NEXT_PUBLIC_SOCKET_PATH=/api/ws and connects on the same origin —

@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState, useCallback } from "react";
 import Image from "next/image";
 import { useAppStore, type MenuItemPublic, type MenuCategoryPublic } from "@/lib/store";
+import { CategoryIcon } from "@/components/CategoryIcon";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
@@ -20,7 +21,7 @@ import { Lightbox } from "@/components/site/Lightbox";
 import { ItemDetailDialog } from "@/components/site/ItemDetailDialog";
 import { useCartStore } from "@/lib/cart-store";
 import { useContent, RichText, ContentImage } from "@/lib/use-content";
-import { formatToman, toPersianDigits, normalizePersian, toEnglishDigits } from "@/lib/fa";
+import { formatToman, toPersianDigits, normalizePersian, toEnglishDigits, timeAgo } from "@/lib/fa";
 import { prettyPhone } from "@/components/site/Header";
 import { motion } from "framer-motion";
 import { toast } from "sonner";
@@ -60,7 +61,10 @@ import {
   RotateCcw,
   Wallet,
   ArrowDownWideNarrow,
+  Moon,
+  Quote,
 } from "lucide-react";
+import { dinnerOnlyMessage, isDinnerShiftNow } from "@/lib/hours";
 
 // ============ local types & data ============
 
@@ -70,6 +74,17 @@ interface ActiveCoupon {
   type: string;
   value: number;
   label: string;
+}
+
+/** approved customer review (testimonials section) */
+interface HomeReview {
+  id: string;
+  rating: number;
+  comment: string | null;
+  itemName: string | null;
+  avatar: string;
+  name: string;
+  dateLabel: string;
 }
 
 /** normalize text for search: Persian chars + digits unification */
@@ -103,12 +118,30 @@ function SectionHeading({
 }
 
 /** compact add-to-cart button with brief success flash (parallel manual ordering path) */
-function AddToCartButton({ item, className = "" }: { item: MenuItemPublic; className?: string }) {
+function AddToCartButton({
+  item,
+  className = "",
+}: {
+  item: MenuItemPublic;
+  className?: string;
+}) {
   const addItem = useCartStore((s) => s.addItem);
   const recordRecentlyViewed = useAppStore((s) => s.recordRecentlyViewed);
+  const businessHours = useAppStore((s) => s.siteSettings.businessHours);
   const [added, setAdded] = useState(false);
+  // گیت «فقط شیفت شب»: آیتم‌های دسته‌های dinner-only خارج از سرویس شام قابل سفارش نیستند
+  const [dinnerActive, setDinnerActive] = useState(() => isDinnerShiftNow(businessHours));
+  useEffect(() => {
+    const t = window.setInterval(() => setDinnerActive(isDinnerShiftNow(businessHours)), 60_000);
+    return () => window.clearInterval(t);
+  }, [businessHours]);
+  const dinnerBlocked = !!item.dinnerOnly && !dinnerActive;
 
   const handleAdd = () => {
+    if (dinnerBlocked) {
+      toast.info(dinnerOnlyMessage(businessHours));
+      return;
+    }
     if (!item.isAvailable) return;
     addItem({ itemId: item.id, name: item.name, price: item.price, imageUrl: item.imageUrl });
     recordRecentlyViewed(item.id);
@@ -116,6 +149,21 @@ function AddToCartButton({ item, className = "" }: { item: MenuItemPublic; class
     toast.success(`${item.name} به سبد خرید اضافه شد 🛒`);
     window.setTimeout(() => setAdded(false), 1300);
   };
+
+  if (dinnerBlocked) {
+    return (
+      <Button
+        onClick={handleAdd}
+        size="sm"
+        aria-label={`${item.name} — فقط در شیفت شب قابل سفارش است`}
+        title={dinnerOnlyMessage(businessHours)}
+        className={`h-9 rounded-xl border border-gold/40 bg-gold/10 text-xs font-bold text-gold-foreground shadow-none transition-all hover:bg-gold/15 ${className}`}
+      >
+        <Moon className="ml-1 h-4 w-4" />
+        فقط شیفت شب 🌙
+      </Button>
+    );
+  }
 
   return (
     <Button
@@ -223,7 +271,7 @@ function MenuCard({ item, catName, onOrder }: { item: MenuItemPublic; catName?: 
               <ZoomIn className="h-3.5 w-3.5" />
             </span>
           )}
-          {/* left-side stacked badges: catName → ویژه → گیاهی → تند (dynamic offsets, no overlap) */}
+          {/* left-side stacked badges: catName → ویژه → فقط شام → گیاهی → تند (dynamic offsets, no overlap) */}
           {[
             ...(catName
               ? [(
@@ -236,6 +284,14 @@ function MenuCard({ item, catName, onOrder }: { item: MenuItemPublic; catName?: 
               ? [(
                   <Badge key="b-special" className="rounded-full bg-gold px-2 text-[10px] font-bold text-gold-foreground shadow-sm">
                     ★ ویژه
+                  </Badge>
+                )]
+              : []),
+            ...(item.dinnerOnly
+              ? [(
+                  <Badge key="b-dinner" className="gap-1 rounded-full bg-slate-800 px-2 text-[10px] font-bold text-white shadow-sm dark:bg-slate-700" title="فقط در شیفت شب قابل سفارش است">
+                    <Moon className="h-3 w-3" />
+                    فقط شام
                   </Badge>
                 )]
               : []),
@@ -322,6 +378,12 @@ function MenuCard({ item, catName, onOrder }: { item: MenuItemPublic; catName?: 
             </span>
           )}
           {!item.isAvailable && <span className="font-bold text-destructive">فعلاً ناموجود</span>}
+          {item.dinnerOnly && (
+            <span className="flex items-center gap-1 font-bold text-gold-foreground">
+              <Moon className="h-3 w-3" />
+              سرویس شام
+            </span>
+          )}
         </div>
         <div className="mt-auto flex flex-wrap items-center gap-2 pt-3">
           <AddToCartButton item={item} className="min-w-36 flex-1" />
@@ -541,6 +603,9 @@ export function HomeView() {
   // coupon dismissal: stored in localStorage per code+day (24h)
   const [couponHidden, setCouponHidden] = useState(false);
 
+  // approved customer reviews for the testimonials section
+  const [reviews, setReviews] = useState<HomeReview[]>([]);
+
   // live menu search
   const [query, setQuery] = useState("");
 
@@ -571,6 +636,47 @@ export function HomeView() {
         }
       } catch {
         /* coupon banner is optional decoration */
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  // approved reviews for the homepage testimonials (best first, 4+ rated)
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      try {
+        const res = await fetch("/api/reviews");
+        const data = await res.json();
+        if (active && data?.success && Array.isArray(data.reviews)) {
+          const mapped: HomeReview[] = (data.reviews as Array<{
+            id: string;
+            rating: number;
+            comment: string | null;
+            createdAt: string;
+            menuItemName?: string | null;
+            authorName?: string | null;
+          }>)
+            .filter((r) => r.rating >= 4)
+            .slice(0, 6)
+            .map((r) => {
+              const name = (r.authorName ?? "").trim() || "مهمان نخل";
+              return {
+                id: r.id,
+                rating: r.rating,
+                comment: r.comment,
+                itemName: r.menuItemName ?? null,
+                avatar: name.trim().charAt(0) || "ن",
+                name,
+                dateLabel: timeAgo(r.createdAt),
+              };
+            });
+          setReviews(mapped);
+        }
+      } catch {
+        /* testimonials are optional decoration */
       }
     })();
     return () => {
@@ -1425,12 +1531,21 @@ export function HomeView() {
                   key={cat.id}
                   value={cat.id}
                   className="rounded-xl px-4 py-2 text-xs font-bold data-[state=active]:bg-primary data-[state=active]:text-primary-foreground sm:text-sm"
+                  title={cat.dinnerOnly ? "غذاهای این دسته فقط در شیفت شب (سرویس شام) قابل سفارش‌اند" : undefined}
                 >
+                  <CategoryIcon icon={cat.icon} className="ml-1.5 h-4 w-4" />
                   {cat.name}
+                  {cat.dinnerOnly && (
+                    <span className="mr-1 flex items-center gap-0.5 rounded-full bg-slate-800/90 px-1.5 py-0.5 text-[9px] font-black text-white dark:bg-slate-700" title="فقط شیفت شب">
+                      <Moon className="h-2.5 w-2.5" />
+                      شب
+                    </span>
+                  )}
                 </TabsTrigger>
               ))}
               {drinksCat && (
                 <TabsTrigger value={drinksCat.id} className="rounded-xl px-4 py-2 text-xs font-bold data-[state=active]:bg-primary data-[state=active]:text-primary-foreground sm:text-sm">
+                  <CategoryIcon icon={drinksCat.icon} className="ml-1.5 h-4 w-4" />
                   {drinksCat.name}
                 </TabsTrigger>
               )}
@@ -1523,6 +1638,58 @@ export function HomeView() {
           </Reveal>
         </div>
       </section>
+
+      {/* ============ CUSTOMER REVIEWS ============ */}
+      {reviews.length > 0 && (
+        <section id="reviews" aria-label="نظرات مشتریان نخل" className="mx-auto max-w-6xl scroll-mt-28 px-4 py-12">
+          <Reveal>
+          <SectionHeading
+            icon={Star}
+            title="مهمان‌های نخل چه می‌گویند؟"
+            subtitle="تجربه‌های واقعی مشتریان از طعم، سرعت و هوش نخل"
+            center
+          />
+          </Reveal>
+          <div className="mt-7 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {reviews.slice(0, 6).map((rv, i) => (
+              <Reveal key={rv.id} delay={i * 70} className="h-full">
+              <Card className="relative h-full gap-0 overflow-hidden rounded-2xl transition-all duration-300 hover:-translate-y-1 hover:shadow-lg">
+                {/* quote watermark */}
+                <span className="pointer-events-none absolute -top-2 left-2 select-none text-6xl leading-none text-gold/15" aria-hidden>
+                  <Quote className="h-14 w-14" />
+                </span>
+                <CardContent className="relative flex h-full flex-col p-5">
+                  <div className="flex items-center gap-2">
+                    <StarRating rating={rv.rating} size={15} showCount={false} />
+                    <span className="text-[10px] font-bold text-muted-foreground">
+                      {rv.itemName ? `دربارهٔ ${rv.itemName}` : "تجربهٔ سفارش"}
+                    </span>
+                  </div>
+                  {rv.comment ? (
+                    <p className="mt-3 flex-1 text-[13px] leading-7 text-muted-foreground">
+                      «{rv.comment}»
+                    </p>
+                  ) : (
+                    <p className="mt-3 flex-1 text-[13px] italic leading-7 text-muted-foreground/60">
+                      (بدون متن — فقط امتیاز {toPersianDigits(rv.rating)} از ۵)
+                    </p>
+                  )}
+                  <div className="mt-4 flex items-center gap-2.5 border-t pt-3.5">
+                    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary/10 text-sm font-black text-primary">
+                      {rv.avatar}
+                    </span>
+                    <div className="min-w-0">
+                      <div className="truncate text-xs font-extrabold">{rv.name}</div>
+                      <div className="text-[10px] text-muted-foreground">{rv.dateLabel}</div>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+              </Reveal>
+            ))}
+          </div>
+        </section>
+      )}
 
       {/* ============ FAQ ============ */}
       <section id="faq" className="mx-auto max-w-3xl scroll-mt-28 px-4 py-12">

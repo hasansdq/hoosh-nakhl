@@ -9,15 +9,26 @@
     "postinstall": "prisma generate && rm -f src/generated/prisma/*.so.node",
     "db:generate": "prisma generate && rm -f src/generated/prisma/*.so.node",
     "db:diff": "prisma migrate diff --from-empty --to-schema-datamodel prisma/schema.prisma --script > migrations/0001_init.sql",
-    "db:setup": "bun scripts/dev-db.mjs",
+    "db:migrate:local": "wrangler d1 migrations apply DB --local",
+    "db:migrate:remote": "wrangler d1 migrations apply DB --remote",
+    "db:seed:local": "wrangler d1 execute DB --local --file seed/seed-core.sql && wrangler d1 execute DB --local --file seed/settings-dev.sql",
+    "db:seed:remote": "wrangler d1 execute DB --remote --file seed/seed-core.sql && wrangler d1 execute DB --remote --file seed/settings-prod.sql",
+    "db:admin:local": "bun scripts/bootstrap-admin-d1.ts --local",
+    "db:admin:remote": "bun scripts/bootstrap-admin-d1.ts --remote",
     "db:seed:generate": "bun scripts/generate-seed-sql.ts",
     "icons:generate": "bun scripts/generate-favicons.ts",
     "build": "next build",
-    "docker:build": "NAKHL_DOCKER_BUILD=1 NEXT_PUBLIC_SOCKET_PATH=/api/ws next build"
+    "docker:build": "NAKHL_DOCKER_BUILD=1 NEXT_PUBLIC_SOCKET_PATH=/api/ws next build",
+    "cf:build": "prisma generate && rm -f src/generated/prisma/*.so.node && NEXT_PUBLIC_CF_BUILD=1 NEXT_PUBLIC_REALTIME_MODE=workers opennextjs-cloudflare build",
+    "cf:dev": "wrangler dev",
+    "cf:tail": "wrangler tail",
+    "deploy": "bun run cf:build && opennextjs-cloudflare deploy"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.1.1",
     "@libsql/client": "^0.18.0",
+    "@opennextjs/cloudflare": "^1.20.4",
+    "@prisma/adapter-d1": "^6.19.0",
     "@prisma/adapter-libsql": "6.19.3",
     "@prisma/client": "^6.11.1",
     "@radix-ui/react-accordion": "^1.2.11",
@@ -77,6 +88,7 @@
     "zustand": "^5.0.6"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260831.1",
     "@tailwindcss/postcss": "^4",
     "@types/react": "^19",
     "@types/react-dom": "^19",
@@ -86,6 +98,7 @@
     "sharp": "^0.34.3",
     "tailwindcss": "^4",
     "tw-animate-css": "^1.3.5",
-    "typescript": "^5"
+    "typescript": "^5",
+    "wrangler": "^4.127.1"
   }
 }

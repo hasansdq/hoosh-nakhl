@@ -1,20 +1,20 @@
 /**
- * Nakhl Restaurant — seed SQL generator
+ * Nakhl Restaurant — D1 seed SQL generator
  * -----------------------------------------
- * Reads prisma/seed-data.json and emits plain SQL files applied by
- * docker/seed.mjs (container boot) and scripts/dev-db.mjs (local dev):
+ * Reads prisma/seed-data.json and emits plain SQL files for Cloudflare D1
+ * (applied with `wrangler d1 execute DB --local|--remote --file ...`):
  *
  *   seed/seed-core.sql      — categories, menu items, coupons
  *                             (idempotent: INSERT OR IGNORE on unique keys)
  *   seed/settings-dev.sql   — development settings (zai AI, dev OTP, payment
- *                             simulation — for the local dev database)
+ *                             simulation — for the local Miniflare D1)
  *   seed/settings-prod.sql  — production-safe settings (openrouter, no dev
- *                             OTP, real ZarinPal — for the Docker volume DB)
+ *                             OTP, real ZarinPal — for the remote D1)
  *
  * SECURITY: the admin account is deliberately NOT seeded here — no password
- * (not even hashed) belongs in a committed SQL file. Admin creation is
- * env-driven inside docker/seed.mjs (ADMIN_USERNAME/ADMIN_PASSWORD on the
- * first boot, when the AdminUser table is still empty).
+ * (not even hashed) belongs in a committed SQL file. Use
+ * `bun run db:admin:local` / `bun run db:admin:remote`
+ * (scripts/bootstrap-admin-d1.ts) to create the admin from env credentials.
  *
  * Run:  bun scripts/generate-seed-sql.ts
  */

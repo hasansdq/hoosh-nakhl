@@ -4,89 +4,125 @@
 # -----------------------------------------------------------------------------
 # اجرا از ریشهٔ پروژه:   bash docker/deploy.sh
 #
-# چهار گام زمان‌دار (در پایان «جدول زمان‌ها» چاپ می‌شود):
-#  ۱. پیش‌نیازها: docker/compose/.env + حافظه/سواپ/دیسک + وضعیت رجیستری
-#  ۲. ساخت ایمیج — با «ضربان‌سنج»: هر ۳۰ ثانیه یک خط وضعیت (زمان سپری‌شده +
-#     گام جاری BuildKit)؛ اگر خروجی بیلد قطع بماند هشدار و علت‌یابی چاپ می‌شود
-#     (مرحلهٔ TypeScript روی سرورهای کند چند دقیقه بی‌خروجی و کاملاً طبیعی است —
-#     خطوط «[nakhl] … (cpu busy)» هر ۶۰ ثانیه نشانهٔ زنده بودن‌اند)
-#  ۳. راه‌اندازی کانتینر + انتظار برای healthy شدن (مهاجرت + سید اولین بوت)
-#  ۴. جمع‌بندی: جدول زمان‌ها + راهنمای ورود مدیر + گام بعدی (پراکسی آپاچی)
-#
-# اگر بیلد شکست بخورد، علت به‌صورت خودکار تشخیص داده می‌شود (شبکه / کمبود
-# حافظه OOM / خطای TypeScript) و لاگ کامل در /tmp نگه داشته می‌شود.
-#
-# تنظیم ریز‌تر پایش (ثانیه، اختیاری):
-#   NAKHL_BUILD_TICK=30   فاصلهٔ خط‌های تایمر (پیش‌فرض ۳۰)
-#   NAKHL_STALL_WARN=240  آستانهٔ هشدار «بی‌خروجی» (پیش‌فرض ۲۴۰)
-#   NAKHL_STALL_ALERT=900 آستانهٔ هشدار جدی + علت‌یابی (پیش‌فرض ۹۰۰)
+# کارها:
+#  ۱. بررسی پیش‌نیازها (docker, docker compose, فایل .env)
+#  ۲. ساخت ایمیج (multi-stage) و راه‌اندازی کانتینر
+#  ۳. انتظار برای healthy شدن (مهاجرت + سید اولین بوت انجام می‌شود)
+#  ۴. نمایش راهنمای ورود مدیر و گام بعدی (پراکسی آپاچی دایرکت‌ادمین)
 # =============================================================================
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
+ROOT_DIR="$(pwd)"
 
-source docker/lib.sh
-trap cleanup EXIT
-trap 'exit 130' INT TERM
+bold()  { printf '\033[1m%s\033[0m\n' "$1"; }
+ok()    { printf '  \033[32m✓\033[0m %s\n' "$1"; }
+err()   { printf '  \033[31m✗\033[0m %s\n' "$1" >&2; }
+warn()  { printf '  \033[33m⚠\033[0m %s\n' "$1"; }
+
+# --- پیش‌پروازش شبکهٔ داکر (سرورهای ایران) ------------------------------------
+# فقط «آگاهی‌رسانی» است — Dockerfile بدون directive «# syntax=…» نوشته شده و
+# بیلد برای خودش به docker.io وصل نمی‌شود؛ اما استقرار اولیه باید دو ایمیج
+# پایه را از جایی بکشد (میرور ابرآروان اگر رجیستری اصلی در دسترس نیست).
+net_preflight() {
+  DAEMON_PROXY="$(docker info 2>/dev/null | awk -F': ' '/^ *(HTTP|HTTPS) Proxy:/{print $2; exit}' | tr -d ' ' || true)"
+  if [ -n "${DAEMON_PROXY}" ]; then
+    P_ADDR="${DAEMON_PROXY#*://}"; P_ADDR="${P_ADDR%%/*}"
+    if timeout 4 bash -c "</dev/tcp/${P_ADDR%:*}/${P_ADDR##*:}" 2>/dev/null; then
+      ok "پروکسی دیمن داکر (${DAEMON_PROXY}) پاسخ می‌دهد"
+    else
+      warn "پروکسی پیکربندی‌شده روی داکر (${DAEMON_PROXY}) پاسخ نمی‌دهد — هر pull از رجیستری شکست می‌خورد"
+      warn "راه‌حل: DOCKER-DEPLOY-FA.md §۱۰ → «خطای شبکه هنگام بیلد» (گام ۱)"
+    fi
+  fi
+  MISSING_BASE=""
+  for IMG in "oven/bun:1" "node:22-slim"; do
+    docker image inspect "${IMG}" >/dev/null 2>&1 || MISSING_BASE="${MISSING_BASE} ${IMG}"
+  done
+  if [ -n "${MISSING_BASE}" ]; then
+    warn "ایمیج‌های پایه به‌صورت محلی موجود نیستند:${MISSING_BASE}"
+    warn "اگر docker.io روی این سرور در دسترس نیست، از میرور بکشید و همان نام را بزنید:"
+    echo  "        docker pull docker.arvancloud.ir/oven/bun:1 && docker tag docker.arvancloud.ir/oven/bun:1 oven/bun:1"
+    echo  "        docker pull docker.arvancloud.ir/library/node:22-slim && docker tag docker.arvancloud.ir/library/node:22-slim node:22-slim"
+  fi
+}
 
 bold "═══ رستوران نخل — استقرار Docker ═══"
-printf '  \033[2m%s\033[0m\n' "$(date '+%Y-%m-%d %H:%M:%S')"
 
-# ═══════════ گام ۱: پیش‌نیازها ═══════════
-ph "پیش‌نیازها" "۱" "۴"
-
+# ---------- 1. پیش‌نیازها ----------
 command -v docker >/dev/null 2>&1 || { err "docker نصب نیست (docker docs → Install Engine)"; exit 1; }
 docker compose version >/dev/null 2>&1 || { err "«docker compose v2» موجود نیست"; exit 1; }
 if [ ! -f .env ]; then
   err "فایل .env یافت نشد — ابتدا: cp docker/env.example .env و مقادیر را تنظیم کنید"
   exit 1
 fi
-ok "docker و compose و .env"
-
-sys_preflight
-net_preflight
+ok "پیش‌نیازها"
 
 # پورت ۸۰/۴۴۳ نباید توسط این استک گرفته شود (مالک آن‌ها DirectAdmin/Apache است)
-if [ -d /usr/local/directadmin ]; then
+if [ -f /usr/local/directadmin ]; then
   ok "دایرکت‌ادمین شناسایی شد — استک فقط روی 127.0.0.1:\${NAKHL_PORT:-8080} منتشر می‌شود"
 fi
 
-ph_done
+# ---------- 2. ساخت و راه‌اندازی ----------
+bold "ساخت ایمیج (چند دقیقه — لایه‌ها کش می‌شوند)…"
+net_preflight
+BUILD_LOG="$(mktemp /tmp/nakhl-deploy-XXXXXX.log)"
+trap 'rm -f "${BUILD_LOG}"' EXIT
 
-# ═══════════ گام ۲: ساخت ایمیج ═══════════
-ph "ساخت ایمیج" "۲" "۴"
-
-build_image
-if [ "$BUILD_RC" -ne 0 ]; then
-  diagnose_build_failure "استقرار ناتمام ماند (هنوز چیزی سرویس‌دهی نمی‌کند)"
+if ! docker compose build 2>&1 | tee "${BUILD_LOG}"; then
+  bold "✗ ساخت ایمیج شکست خورد — استقرار ناتمام ماند (هنوز چیزی سرویس‌دهی نمی‌کند)"
+  echo
+  if grep -qiE 'proxyconnect|deadline ?exceeded|i/o timeout|failed to resolve' "${BUILD_LOG}"; then
+    bold "  تشخیص: خطای شبکه/رجیستری داکر (در سرورهای ایران رایج). سه مسیر رفع:"
+    echo
+    echo  "  ۱) پروکسی مردهٔ دیمن داکر را پیدا و حذف/اصلاح کنید:"
+    echo  "       docker info | grep -i proxy"
+    echo  "       systemctl show docker --property=Environment"
+    echo  "       cat /etc/docker/daemon.json"
+    echo  "       ls /etc/systemd/system/docker.service.d/ 2>/dev/null"
+    echo  "     سپس:  systemctl daemon-reload && systemctl restart docker"
+    echo
+    echo  "  ۲) اگر docker.io بدون پروکسی هم باز نیست — میرور ابرآروان در daemon.json:"
+    echo  "       { \"registry-mirrors\": [\"https://docker.arvancloud.ir\"] }"
+    echo  "     سپس:  systemctl restart docker"
+    echo
+    echo  "  ۳) راه سریع بدون دست زدن به دیمن — فقط ایمیج‌های پایه را از میرور بکشید:"
+    echo  "       docker pull docker.arvancloud.ir/oven/bun:1 && docker tag docker.arvancloud.ir/oven/bun:1 oven/bun:1"
+    echo  "       docker pull docker.arvancloud.ir/library/node:22-slim && docker tag docker.arvancloud.ir/library/node:22-slim node:22-slim"
+    echo
+    echo  "  راهنمای کامل: DOCKER-DEPLOY-FA.md §۱۰ (خطای شبکه هنگام بیلد)"
+  else
+    echo  "  لاگ کامل بیلد در همین خروجی بالاست؛ جدول رفع اشکال: DOCKER-DEPLOY-FA.md §۱۰"
+  fi
   exit 1
 fi
-
-ph_done
-
-# ═══════════ گام ۳: راه‌اندازی و سلامت ═══════════
-ph "راه‌اندازی و سلامت" "۳" "۴"
-
-PORT="$(grep -E '^NAKHL_PORT=' .env | cut -d= -f2 || true)"
-PORT="${PORT:-8080}"
 
 bold "راه‌اندازی کانتینر…"
 docker compose up -d
 
-# اولین بوت: مهاجرت دیتابیس + سید + ساخت ادمین داخل entrypoint انجام می‌شود
-wait_healthy 180 || exit 1
-http_health "$PORT"
+# ---------- 3. انتظار برای سلامت ----------
+PORT="$(grep -E '^NAKHL_PORT=' .env | cut -d= -f2 || true)"
+PORT="${PORT:-8080}"
+bold "انتظار برای healthy شدن (مهاجرت دیتابیس + سید اولین بوت)…"
+for i in $(seq 1 60); do
+  STATE="$(docker inspect --format '{{.State.Health.Status}}' nakhl-app 2>/dev/null || echo starting)"
+  if [ "$STATE" = "healthy" ]; then
+    ok "کانتینر healthy شد (${i}×۲ ثانیه)"
+    break
+  fi
+  if [ "$i" = "60" ]; then
+    err "کانتینر healthy نشد — لاگ‌ها: docker compose logs --tail=100 app"
+    exit 1
+  fi
+  sleep 2
+done
 
-ph_done
+HTTP_CODE="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:${PORT}/api/health" || true)"
+[ "$HTTP_CODE" = "200" ] && ok "GET /api/health → 200" || err "health endpoint → ${HTTP_CODE:-fail}"
 
-# ═══════════ گام ۴: جمع‌بندی ═══════════
-ph "جمع‌بندی" "۴" "۴"
-
+# ---------- 4. راهنمای ادامه ----------
 CREDS_HINT="$(docker compose exec -T app sh -c '[ -f /app/data/initial-admin-credentials.txt ] && echo yes || echo no' 2>/dev/null || echo no)"
 
-summary
-
-echo
 bold "═══ استقرار کامل شد ═══"
 echo "  • سایت روی میزبان:  http://127.0.0.1:${PORT}"
 echo "  • لاگ‌ها:            docker compose logs -f app"
@@ -99,5 +135,3 @@ echo "  1) در DirectAdmin یک دامنه/ساب‌دامنه بسازید (Do
 echo "  2) فایل docker/directadmin/nakhl-proxy.conf را در Custom HTTPD همان دامنه قرار دهید"
 echo "  3) گواهی SSL (Let's Encrypt) را از خود DirectAdmin برای دامنه صادر کنید"
 echo "  4) راهنمای کامل: DOCKER-DEPLOY-FA.md (بخش دایرکت‌ادمین)"
-
-ph_done

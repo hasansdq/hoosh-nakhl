@@ -60,6 +60,8 @@ export const categorySchema = z.object({
   icon: z.string().trim().max(40).optional().or(z.literal("")),
   sortOrder: z.number().int().min(0).max(999).optional(),
   isActive: z.boolean().optional(),
+  /** فقط شیفت شب — غذاهای این دسته فقط در سرویس شام قابل سفارش‌اند */
+  dinnerOnly: z.boolean().optional(),
 });
 
 export const menuItemSchema = z.object({

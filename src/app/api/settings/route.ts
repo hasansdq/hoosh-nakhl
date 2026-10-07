@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSettings, DEFAULT_GENERAL_SETTINGS } from "@/lib/settings";
+import { describeBusinessHours, normalizeBusinessHours, type BusinessHours } from "@/lib/hours";
 
 /**
  * Public site settings (CMS-managed) — the subset safe to expose to visitors.
@@ -15,6 +16,7 @@ export async function GET() {
       phone: string;
       email: string;
       workingHours: string;
+      businessHours: BusinessHours;
       city: string;
       instagram: string;
       telegram: string;
@@ -25,6 +27,10 @@ export async function GET() {
       freeDeliveryOver: number;
     }>("general");
 
+    // structured hours are the single source of truth; the display text is derived
+    const businessHours = normalizeBusinessHours(s.businessHours);
+    const workingHours = describeBusinessHours(businessHours);
+
     return NextResponse.json({
       success: true,
       settings: {
@@ -32,7 +38,8 @@ export async function GET() {
         restaurantTagline: s.restaurantTagline || DEFAULT_GENERAL_SETTINGS.restaurantTagline,
         address: s.address || DEFAULT_GENERAL_SETTINGS.address,
         phone: s.phone || DEFAULT_GENERAL_SETTINGS.phone,
-        workingHours: s.workingHours || DEFAULT_GENERAL_SETTINGS.workingHours,
+        workingHours,
+        businessHours,
         city: s.city || DEFAULT_GENERAL_SETTINGS.city,
         instagram: s.instagram || "",
         telegram: s.telegram || "",

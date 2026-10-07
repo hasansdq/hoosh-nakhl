@@ -3,13 +3,13 @@
  * Nakhl Restaurant — SQLite migration runner (Docker / VPS)
  * ---------------------------------------------------------
  * Applies the SQL migrations in $NAKHL_MIGRATIONS_DIR (defaults to
- * /app/migrations) to the local SQLite database at $NAKHL_SQLITE_PATH,
- * tracking applied files in `_nakhl_migrations`. The same runner also
- * serves local development through scripts/dev-db.mjs (`bun run db:setup`).
+ * /app/migrations — the same files Cloudflare D1 applies via
+ * `wrangler d1 migrations apply`) to the local SQLite database at
+ * $NAKHL_SQLITE_PATH, tracking applied files in `_nakhl_migrations`.
  *
  * Safety contract (the reason this file exists):
- *  • ONLY forward, additive migrations — never drops or rewrites data.
- *  • Each migration runs once, inside a transaction; a failed migration
+ *  • Forward-only migrations; explicit destructive changes may remove data.
+ *  • Each migration and its completion record commit in one transaction; a failed migration
  *    aborts the container boot (fail-fast instead of a half-migrated DB).
  *  • Fully idempotent: re-running on an up-to-date database is a no-op,
  *    which makes container restarts and image redeploys safe.
@@ -50,6 +50,30 @@ async function main() {
   const journal = await client.execute("PRAGMA journal_mode=WAL");
   console.log(`[migrate] journal_mode = ${journal.rows[0]?.[0] ?? "?"}`);
 
+  // ---------------------------------------------------------------------------
+  // CRITICAL DATA-SAFETY — foreign key enforcement must be OFF while migrating.
+  //
+  // @libsql/client opens connections with foreign_keys=ON (verified
+  // empirically — NOT the raw SQLite default of OFF). At least one migration
+  // (0006) rebuilds the Order table using the SQLite copy-drop-rename pattern.
+  // With FK enforcement ON, `DROP TABLE "Order"` performs an implicit DELETE
+  // that CASCADE-deletes every OrderItem and OrderStatusLog row — silently
+  // wiping the details of ALL existing orders on upgrade.
+  //
+  // PRAGMA foreign_keys is a NO-OP inside a transaction, so it MUST be set
+  // here, outside the per-migration BEGIN/COMMIT wrappers. This is the exact
+  // approach of the Prisma migration runner for SQLite.
+  // ---------------------------------------------------------------------------
+  await client.execute("PRAGMA foreign_keys=OFF");
+  const fkState = await client.execute("PRAGMA foreign_keys");
+  const fkOff = Number(fkState.rows[0]?.foreign_keys ?? fkState.rows[0]?.[0] ?? 1);
+  if (fkOff !== 0) {
+    fatal(
+      "could not disable foreign key enforcement on this connection — refusing to migrate (a table-rebuild migration would cascade-delete order details)",
+    );
+  }
+  console.log("[migrate] foreign_keys = OFF for the migration connection (data-safety)");
+
   // --- discover + apply pending migrations -------------------------------
   let files = [];
   try {
@@ -78,7 +102,11 @@ async function main() {
       // Wrap in an explicit transaction: either the whole file lands or none
       // of it does. (Our migration files contain plain SQLite DDL/DML — no
       // PRAGMA/BEGIN inside, verified in CI — so wrapping is safe.)
-      await client.executeMultiple(`BEGIN;\n${sql}\nCOMMIT;`);
+      // SQL filenames come from disk; escape quotes before embedding the name.
+      const recordedName = name.replace(/'/g, "''");
+      await client.executeMultiple(
+        `BEGIN;\n${sql}\nINSERT INTO "_nakhl_migrations" ("name") VALUES ('${recordedName}');\nCOMMIT;`,
+      );
     } catch (e) {
       // make sure a failed transaction is rolled back before we abort
       try {
@@ -89,12 +117,24 @@ async function main() {
       fatal(`migration ${name} failed: ${e.message}`);
     }
 
-    await client.execute({
-      sql: 'INSERT INTO "_nakhl_migrations" ("name") VALUES (?)',
-      args: [name],
-    });
     console.log(`[migrate] ✓ ${name} applied`);
   }
+
+  // ---------------------------------------------------------------------------
+  // Post-migration integrity gate: with FK enforcement off, referential damage
+  // would not have aborted any statement — verify the final state explicitly
+  // before handing the database to the application (fail-fast > subtle rot).
+  // ---------------------------------------------------------------------------
+  const violations = await client.execute("PRAGMA foreign_key_check");
+  if (violations.rows.length > 0) {
+    const tableNames = [...new Set(violations.rows.map((r) => String(r.table ?? r[0] ?? "?")))];
+    fatal(
+      `foreign_key_check reported ${violations.rows.length} violation(s) in: ${tableNames.join(", ")} — ` +
+        `restore the latest snapshot with docker/restore.sh before serving traffic`,
+    );
+  }
+  console.log("[migrate] foreign_key_check clean — referential integrity verified");
+  await client.execute("PRAGMA foreign_keys=ON");
 
   const total = (await client.execute('SELECT COUNT(*) AS n FROM "_nakhl_migrations"')).rows[0]?.n;
   console.log(`[migrate] database is up to date (${total} migration(s) applied)`);

@@ -3,7 +3,7 @@
 import Image from "next/image";
 import { Badge } from "@/components/ui/badge";
 import { formatToman, toPersianDigits } from "@/lib/fa";
-import { Flame, Clock, Star } from "lucide-react";
+import { Flame, Clock, Star, Moon } from "lucide-react";
 
 export interface MenuPayloadItem {
   id: string;
@@ -15,6 +15,8 @@ export interface MenuPayloadItem {
   isSpecial: boolean;
   calories?: number | null;
   prepTime?: number | null;
+  /** فقط شیفت شب — ارث‌بری از دسته */
+  dinnerOnly?: boolean;
 }
 
 export interface MenuPayload {
@@ -22,6 +24,8 @@ export interface MenuPayload {
   categories: {
     id: string;
     name: string;
+    /** فقط شیفت شب — غذاهای این دسته فقط در سرویس شام قابل سفارش‌اند */
+    dinnerOnly?: boolean;
     items: MenuPayloadItem[];
   }[];
 }
@@ -43,7 +47,18 @@ export function MenuCards({ payload }: { payload: MenuPayload }) {
         {payload.categories.map((cat) => (
           <div key={cat.id}>
             <div className="mb-2 flex items-center gap-2">
-              <h4 className="text-sm font-extrabold text-primary">{cat.name}</h4>
+              <h4 className="flex items-center gap-1.5 text-sm font-extrabold text-primary">
+                {cat.name}
+                {cat.dinnerOnly && (
+                  <span
+                    className="flex items-center gap-0.5 rounded-full bg-slate-800 px-1.5 py-0.5 text-[9px] font-black text-white dark:bg-slate-700"
+                    title="غذاهای این دسته فقط در شیفت شب (سرویس شام) قابل سفارش‌اند"
+                  >
+                    <Moon className="h-2.5 w-2.5" />
+                    فقط شب
+                  </span>
+                )}
+              </h4>
               <span className="h-px flex-1 bg-gradient-to-l from-primary/30 to-transparent" />
             </div>
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
@@ -77,6 +92,16 @@ export function MenuCards({ payload }: { payload: MenuPayload }) {
                           <Badge variant="secondary" className="h-5 shrink-0 gap-0.5 bg-gold/15 px-1.5 text-[10px] text-gold-foreground">
                             <Star className="h-3 w-3 text-gold" />
                             ویژه
+                          </Badge>
+                        )}
+                        {item.dinnerOnly && (
+                          <Badge
+                            variant="secondary"
+                            className="h-5 shrink-0 gap-0.5 bg-slate-800/90 px-1.5 text-[10px] text-white dark:bg-slate-700"
+                            title="فقط در شیفت شب قابل سفارش است"
+                          >
+                            <Moon className="h-3 w-3" />
+                            شب
                           </Badge>
                         )}
                       </div>

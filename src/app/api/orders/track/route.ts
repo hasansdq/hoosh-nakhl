@@ -56,7 +56,6 @@ export async function POST(req: NextRequest) {
         taxAmount: order.taxAmount,
         createdAt: order.createdAt.toISOString(),
         updatedAt: order.updatedAt.toISOString(),
-        scheduledFor: order.scheduledFor ? order.scheduledFor.toISOString() : null,
         items: order.items.map((i) => ({ name: i.name, quantity: i.quantity })),
         statusLogs: order.statusLogs.map((l) => ({
           status: l.status,

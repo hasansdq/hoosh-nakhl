@@ -720,15 +720,10 @@ input[type="number"]::-webkit-inner-spin-button {
   transform: translateY(-1px);
 }
 
-/* chat view height — fills the viewport between sticky header and mobile bottom nav */
-.chat-shell {
-  height: calc(100dvh - 6.5rem);
-}
-@media (max-width: 639px) {
-  .chat-shell {
-    height: calc(100dvh - 10rem - env(safe-area-inset-bottom, 0px));
-  }
-}
+/* chat view — the Nakhl AI page is an app-like full-height surface:
+   the page root switches to h-dvh + overflow-hidden (see src/app/page.tsx)
+   and the chat column stretches via flex min-h-0, so no fixed height math
+   is needed anymore (the old .chat-shell calc is retired). */
 
 /* bottom padding that respects the iOS home-indicator safe area */
 .pb-safe {

@@ -20,12 +20,20 @@ export function PwaManager() {
   const [installEvt, setInstallEvt] = useState<BeforeInstallPromptEvent | null>(null);
   const [installDismissed, setInstallDismissed] = useState(false);
 
-  // register the service worker
+  // register the service worker — NEVER in dev (Next dev serves unbundled chunks
+  // without content hashes; a cached SW keeps stale client code alive across
+  // rebuilds and causes hydration mismatches. Production builds are hash-stable.)
   useEffect(() => {
-    if ("serviceWorker" in navigator) {
+    if ("serviceWorker" in navigator && process.env.NODE_ENV === "production") {
       navigator.serviceWorker.register("/sw.js").catch(() => {
         /* silent — dev quirks shouldn't break UX */
       });
+    } else if ("serviceWorker" in navigator && process.env.NODE_ENV !== "production") {
+      // active cleanup: any SW left over from a previous production-grade visit
+      // (or earlier dev session) is unregistered so fresh code is always served
+      navigator.serviceWorker.getRegistrations().then((regs) => {
+        regs.forEach((r) => void r.unregister());
+      }).catch(() => { /* silent */ });
     }
   }, []);
 

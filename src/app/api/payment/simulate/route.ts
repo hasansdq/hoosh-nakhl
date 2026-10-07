@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { db } from "@/lib/db";
 import { ok, fail, requireUser, logAudit } from "@/lib/api";
 import { notifyAdmins, notifyCustomer } from "@/lib/notify";
+import { notifyChatPaymentSuccess, notifyChatPaymentFailed } from "@/lib/chat/payment-chat";
 
 /**
  * Simulated gateway completion (used when simulation mode is ON in payment settings).
@@ -51,7 +52,7 @@ export async function POST(req: NextRequest) {
 
     if (body.success) {
       const fakeRef = Math.floor(10_000_000 + Math.random() * 89_999_999);
-      await db.order.update({
+      const updated = await db.order.update({
         where: { id: order.id },
         data: {
           status: "PAID",
@@ -61,6 +62,7 @@ export async function POST(req: NextRequest) {
           paidAt: new Date(),
           paymentError: null,
         },
+        include: { items: true, statusLogs: { orderBy: { createdAt: "asc" } } },
       });
       await db.orderStatusLog.create({
         data: { orderId: order.id, status: "PAID", note: `پرداخت آزمایشی موفق — کد رهگیری ${fakeRef}` },
@@ -98,20 +100,36 @@ export async function POST(req: NextRequest) {
         from: order.status,
         to: "PAID",
       });
+      // chat verdict: final confirmation + tracking code inside Nakhl AI
+      await notifyChatPaymentSuccess({
+        ...updated,
+        paymentRef: String(fakeRef),
+        items: updated.items.map((i) => ({ name: i.name, quantity: i.quantity })),
+        statusLogs: [
+          ...updated.statusLogs,
+          { status: "PAID", createdAt: new Date() },
+        ],
+      });
       await logAudit(user.id, "PAYMENT_SIMULATED_SUCCESS", { entity: "order", entityId: order.id });
       return ok({ status: "PAID", orderNumber: order.orderNumber, ref: fakeRef });
     }
 
-    await db.order.update({
+    const failed = await db.order.update({
       where: { id: order.id },
       data: {
         status: "PAYMENT_FAILED",
         paymentStatus: "FAILED",
         paymentError: "پرداخت آزمایشی ناموفق — خطای شبیه‌سازی‌شده درگاه",
       },
+      include: { items: true, statusLogs: { orderBy: { createdAt: "asc" } } },
     });
     await db.orderStatusLog.create({
       data: { orderId: order.id, status: "PAYMENT_FAILED", note: "پرداخت آزمایشی ناموفق" },
+    });
+    await notifyChatPaymentFailed({
+      ...failed,
+      items: failed.items.map((i) => ({ name: i.name, quantity: i.quantity })),
+      statusLogs: [...failed.statusLogs, { status: "PAYMENT_FAILED", createdAt: new Date() }],
     });
     await logAudit(user.id, "PAYMENT_SIMULATED_FAILED", { entity: "order", entityId: order.id });
     return ok({ status: "FAILED", orderNumber: order.orderNumber });

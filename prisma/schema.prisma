@@ -1,25 +1,21 @@
 // Nakhl Restaurant - Rafsanjan | رستوران نخل رفسنجان
 // Professional modular schema
 //
-// Docker / VPS deployment (single target):
+// Cloudflare Workers deployment:
 //  - The `prisma-client` generator emits a pure TypeScript client into
-//    `src/generated/prisma` — engineless (WASM query compiler, no Rust engine
-//    binary). `runtime = "workerd"` is Prisma's name for that engineless
-//    build target; it runs on plain Node 22 (the Docker runtime image and
-//    local `next dev` alike).
-//  - Queries execute through @prisma/adapter-libsql (src/lib/db.ts) on the
-//    SQLite file at $NAKHL_SQLITE_PATH (Docker volume) or db/nakhl.db (dev).
-//  - DDL for fresh databases is generated with:
+//    `src/generated/prisma` (no Rust query engine binary — Workers-compatible).
+//  - `driverAdapters` + `queryCompiler` let the client execute queries through
+//    the Cloudflare D1 binding (see src/lib/db.ts → @prisma/adapter-d1).
+//  - DDL for Cloudflare D1 is generated with:
 //      bunx prisma migrate diff --from-empty --to-schema-datamodel prisma/schema.prisma --script > migrations/0001_init.sql
-//    and applied by docker/migrate.mjs at container boot (forward-only).
+//    and applied to D1 with `wrangler d1 migrations apply` (see package.json db:* scripts).
 
 generator client {
   provider = "prisma-client"
   output   = "../src/generated/prisma"
 
-  // "workerd" emits the WebAssembly query compiler (no native .so engine) —
-  // Prisma's engineless build, which runs on plain Node (Docker runtime
-  // image and local dev). See the header comment above.
+  // "workerd" emits the WebAssembly query compiler (no native .so engine),
+  // which runs both on Cloudflare Workers and in local Node (next dev).
   runtime = "workerd"
 }
 
@@ -27,9 +23,9 @@ datasource db {
   provider = "sqlite"
 
   // CLI-only placeholder (migrate diff / generate). The application runtime
-  // always goes through the libsql adapter (src/lib/db.ts) and never opens
-  // this file — production data lives in the Docker volume SQLite file.
-  // A literal URL keeps `prisma generate` working without any .env present.
+  // always goes through the D1 binding (src/lib/db.ts) and never opens this
+  // file — production runs on Cloudflare D1. A literal URL keeps `prisma
+  // generate` working in CI/Cloudflare Builds without any .env present.
   url = "file:./cli-only.db"
 }
 
@@ -112,6 +108,8 @@ model Category {
   icon      String? // lucide icon key
   sortOrder Int        @default(0)
   isActive  Boolean    @default(true)
+  /// فقط شیفت شب — غذاهای این دسته فقط در سرویس شام قابل سفارش‌اند
+  dinnerOnly Boolean   @default(false)
   /// کد گروه باران (زیرگروه یا سرگروه — بسته به تنظیم categoryLevel)
   baranGroupId     Int?
   /// کد سرگروه باران (فقط جهت ارجاع)
@@ -184,7 +182,6 @@ model Order {
   status          String // PENDING_PAYMENT | PAID | PREPARING | READY | DELIVERING | DELIVERED | CANCELED | PAYMENT_FAILED
   address         String?
   note            String?
-  scheduledFor    DateTime? /// زمان تحویل پیش‌سفارش
   subtotal        Int
   deliveryFee     Int      @default(0)
   taxRate         Float    @default(0.1)
@@ -252,6 +249,7 @@ model ChatSession {
   stage     String   @default("GREETING")
   draft     String? // JSON draft order state
   orderId   String?
+  title     String? // عنوان گفتگو (از اولین پیام کاربر خودکار ساخته می‌شود)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

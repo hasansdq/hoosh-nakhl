@@ -103,26 +103,42 @@ export default function Page() {
   }
 
   return (
-    <div className="flex min-h-screen flex-col">
+    <div className={view === "chat" ? "flex h-dvh flex-col overflow-hidden" : "flex min-h-screen flex-col"}>
       <a href="#main-content" className="skip-link">
         پرش به محتوای اصلی
       </a>
-      <SiteHeader />
-      <main id="main-content" className="flex-1 pb-16 sm:pb-0">
-        <div key={view} className="animate-view-in">
-          {view === "home" && <HomeView />}
-          {view === "chat" && (
-            <div className="-mb-16 pt-3 sm:mb-0 sm:pt-4">
-              <ChatView />
-            </div>
-          )}
-          {view === "orders" && <OrdersView />}
-          {view === "profile" && <ProfileView />}
-          {view === "cart" && <CartView />}
-          {view === "track" && <TrackView />}
+      {/* چت در موبایل تمام‌صفحه است: هدر فقط در دسکتاپ نمایش داده می‌شود
+          (display:contents قفلِ flex را حفظ می‌کند تا ترتیب ستون‌ها نلرزد) */}
+      {view === "chat" ? (
+        <div className="hidden sm:contents">
+          <SiteHeader />
         </div>
+      ) : (
+        <SiteHeader />
+      )}
+      <main
+        id="main-content"
+        className={
+          view === "chat"
+            ? "flex min-h-0 flex-1 flex-col"
+            : "flex-1 pb-16 sm:pb-0"
+        }
+      >
+        {view === "chat" ? (
+          <div key={view} className="animate-view-in flex min-h-0 flex-1 flex-col">
+            <ChatView />
+          </div>
+        ) : (
+          <div key={view} className="animate-view-in">
+            {view === "home" && <HomeView />}
+            {view === "orders" && <OrdersView />}
+            {view === "profile" && <ProfileView />}
+            {view === "cart" && <CartView />}
+            {view === "track" && <TrackView />}
+          </div>
+        )}
       </main>
-      <SiteFooter />
+      {view !== "chat" && <SiteFooter />}
 
       {/* overlays — dedicated full-screen login page replaces the old floating modal */}
       {authOpen && <AuthPage />}
@@ -130,7 +146,7 @@ export default function Page() {
       <PaymentResultBanner />
       <BackToTop />
       <PwaManager />
-      <MobileBottomNav />
+      {view !== "chat" && <MobileBottomNav />}
 
       {/* hidden SEO-friendly content for menu */}
       {menuLoading === false && menu.length > 0 && view === "home" && (

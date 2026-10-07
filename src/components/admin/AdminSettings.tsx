@@ -33,7 +33,23 @@ import {
   Search,
   Sparkles,
   Info,
+  Sun,
+  Moon,
+  Clock3,
+  UtensilsCrossed,
 } from "lucide-react";
+import { toPersianDigits } from "@/lib/fa";
+import { CategoryIcon } from "@/components/CategoryIcon";
+import {
+  describeBusinessHours,
+  isDinnerShiftNow,
+  openStatusText,
+  parseHHMM,
+  nowMinutesInRestaurantTz,
+  type BusinessHours,
+  type HoursPeriod,
+  type PeriodKey,
+} from "@/lib/hours";
 
 // ==================== AI ====================
 
@@ -827,7 +843,9 @@ interface GeneralSettings {
   address: string;
   phone: string;
   email: string;
+  /** متن نمایشی — از businessHours مشتق می‌شود؛ دیگر مستقیم ویرایش نمی‌شود */
   workingHours: string;
+  businessHours: BusinessHours;
   taxPercent: number;
   deliveryFee: number;
   minOrderAmount: number;
@@ -836,6 +854,176 @@ interface GeneralSettings {
   instagram: string;
   telegram: string;
   aboutText: string;
+}
+
+/** تایم‌پیکر HH:MM — دو دراپ‌داون ساعت/دقیقه با ارقام فارسی */
+function TimePicker({
+  value,
+  onChange,
+  allowMidnightEnd = false,
+  disabled = false,
+  label,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  allowMidnightEnd?: boolean;
+  disabled?: boolean;
+  label: string;
+}) {
+  const [h, m] = value.split(":");
+  const hours = Array.from({ length: 24 }, (_, i) => String(i).padStart(2, "0"));
+  if (allowMidnightEnd) hours.push("24");
+  const minutes = h === "24" ? ["00"] : ["00", "15", "30", "45"];
+  const setHour = (nh: string) => onChange(nh === "24" ? "24:00" : `${nh}:${m}`);
+  const setMinute = (nm: string) => onChange(`${h}:${nm}`);
+
+  return (
+    <div dir="ltr" className="flex items-center gap-1.5" role="group" aria-label={label}>
+      <Select value={h} onValueChange={setHour} disabled={disabled}>
+        <SelectTrigger className="w-[4.25rem] rounded-xl font-bold" aria-label={`${label} — ساعت`}>
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent className="max-h-72">
+          {hours.map((hh) => (
+            <SelectItem key={hh} value={hh} className="justify-center font-bold">
+              {toPersianDigits(hh)}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      <span className="select-none font-black text-muted-foreground">:</span>
+      <Select value={m} onValueChange={setMinute} disabled={disabled || h === "24"}>
+        <SelectTrigger className="w-[4.25rem] rounded-xl font-bold" aria-label={`${label} — دقیقه`}>
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {minutes.map((mm) => (
+            <SelectItem key={mm} value={mm} className="justify-center font-bold">
+              {toPersianDigits(mm)}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </div>
+  );
+}
+
+/** ویرایشگر ساعات کاری — دو بازهٔ ناهار/شام با تایم‌پیکر + وضعیت زنده */
+function BusinessHoursEditor({
+  hours,
+  onChange,
+}: {
+  hours: BusinessHours;
+  onChange: (h: BusinessHours) => void;
+}) {
+  // تیک ۳۰ ثانیه‌ای تا بج «الان باز/بسته» وقتی پنل باز است تازه بماند
+  const [nowMin, setNowMin] = useState(() => nowMinutesInRestaurantTz());
+  useEffect(() => {
+    const t = window.setInterval(() => setNowMin(nowMinutesInRestaurantTz()), 30_000);
+    return () => window.clearInterval(t);
+  }, []);
+
+  const status = openStatusText(hours, nowMin);
+  const periodMeta: { key: PeriodKey; title: string; icon: typeof Sun; hint: string }[] = [
+    { key: "lunch", title: "سرویس ناهار", icon: Sun, hint: "مثلاً ۱۲:۰۰ تا ۱۶:۰۰" },
+    { key: "dinner", title: "سرویس شام", icon: Moon, hint: "مثلاً ۱۹:۰۰ تا ۲۴:۰۰" },
+  ];
+
+  const setPeriod = (key: PeriodKey, patch: Partial<HoursPeriod>) =>
+    onChange({ ...hours, [key]: { ...hours[key], ...patch } });
+
+  return (
+    <div className="space-y-3 rounded-2xl border bg-muted/20 p-4">
+      {/* وضعیت لحظه‌ای */}
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span
+          className={`flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-black ${
+            status.open
+              ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400"
+              : "bg-rose-500/15 text-rose-700 dark:text-rose-400"
+          }`}
+        >
+          <Clock3 className="h-3.5 w-3.5" />
+          {status.label} — {status.detail}
+        </span>
+        <span className="text-[11px] font-bold text-muted-foreground">
+          {describeBusinessHours(hours)} <span className="font-normal">(به وقت ایران)</span>
+        </span>
+      </div>
+
+      {periodMeta.map(({ key, title, icon: Icon, hint }) => {
+        const p = hours[key];
+        const openMin = parseHHMM(p.open);
+        const closeMin = parseHHMM(p.close);
+        const crossesMidnight =
+          openMin !== null && closeMin !== null && closeMin < openMin;
+        return (
+          <div
+            key={key}
+            className={`rounded-xl border bg-card p-3 transition-opacity ${
+              p.enabled ? "" : "opacity-55"
+            }`}
+          >
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2 text-sm font-extrabold">
+                <span
+                  className={`flex h-8 w-8 items-center justify-center rounded-lg ${
+                    key === "lunch"
+                      ? "bg-amber-500/15 text-amber-600 dark:text-amber-400"
+                      : "bg-indigo-500/10 text-slate-600 dark:text-slate-300"
+                  }`}
+                >
+                  <Icon className="h-4 w-4" />
+                </span>
+                {title}
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-[11px] font-bold text-muted-foreground">
+                  {p.enabled ? "پذیرش سفارش فعال" : "غیرفعال"}
+                </span>
+                <Switch
+                  checked={p.enabled}
+                  onCheckedChange={(v) => setPeriod(key, { enabled: v })}
+                  aria-label={`${p.enabled ? "غیرفعال‌سازی" : "فعال‌سازی"} ${title}`}
+                />
+              </div>
+            </div>
+            <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label className="text-[11px] text-muted-foreground">ساعت شروع</Label>
+                <TimePicker
+                  value={p.open}
+                  onChange={(v) => setPeriod(key, { open: v })}
+                  disabled={!p.enabled}
+                  label={`شروع ${title}`}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-[11px] text-muted-foreground">ساعت پایان</Label>
+                <TimePicker
+                  value={p.close}
+                  onChange={(v) => setPeriod(key, { close: v })}
+                  allowMidnightEnd
+                  disabled={!p.enabled}
+                  label={`پایان ${title}`}
+                />
+              </div>
+            </div>
+            <p className="mt-2 text-[10px] leading-4 text-muted-foreground">
+              {crossesMidnight
+                ? "⏰ پایان کوچک‌تر از شروع است — این بازه از نیمه‌شب عبور می‌کند و تا روز بعد ادامه می‌یابد."
+                : `حداقل و حداکثر منطقی: ${hint}`}
+            </p>
+          </div>
+        );
+      })}
+
+      <p className="text-[10px] leading-5 text-muted-foreground">
+        خارج از این بازه‌ها، ثبت و پرداخت سفارش در سایت و گفتگوی هوش نخل به‌صورت خودکار غیرفعال می‌شود و
+        پیام «رستوران الان بسته است» با ساعت باز شدن نمایش داده می‌شود. «۲۴:۰۰» یعنی نیمه‌شب.
+      </p>
+    </div>
+  );
 }
 
 function GeneralSettingsTab() {
@@ -854,7 +1042,9 @@ function GeneralSettingsTab() {
   const save = async () => {
     if (!settings) return;
     setSaving(true);
-    const res = await api("/api/admin/settings", { method: "PUT", body: { group: "general", values: settings } });
+    // متن نمایشی همیشه از بازه‌های ساختاریافته مشتق می‌شود (تطابق DB با آنچه سایت می‌بیند)
+    const values = { ...settings, workingHours: describeBusinessHours(settings.businessHours) };
+    const res = await api("/api/admin/settings", { method: "PUT", body: { group: "general", values } });
     setSaving(false);
     if (!res.success) return toast.error(res.error ?? "خطا");
     toast.success("تنظیمات عمومی ذخیره شد ✅");
@@ -897,8 +1087,24 @@ function GeneralSettingsTab() {
             <Input value={settings.address} onChange={(e) => setSettings({ ...settings, address: e.target.value })} className="rounded-xl" />
           </div>
           <div className="space-y-1.5 sm:col-span-2">
-            <Label>ساعات کاری</Label>
-            <Input value={settings.workingHours} onChange={(e) => setSettings({ ...settings, workingHours: e.target.value })} className="rounded-xl" />
+            <div className="flex items-center justify-between">
+              <Label>ساعات کاری و پذیرش سفارش (ناهار / شام)</Label>
+              <span className="text-[10px] font-bold text-muted-foreground">متن نمایشی مشتری‌ها: خودکار ساخته می‌شود</span>
+            </div>
+            <BusinessHoursEditor
+              hours={settings.businessHours}
+              onChange={(businessHours) => setSettings({ ...settings, businessHours })}
+            />
+            <p className="text-[10px] leading-4 text-muted-foreground">
+              این بازه‌ها به‌صورت زنده در <b className="text-foreground">بج «الان باز/بسته» هدر، فوتر و بخش «تماس با ما»</b> سایت اعمال می‌شوند و خارج از آن‌ها سفارش‌گیری قفل می‌شود.
+            </p>
+          </div>
+          <div className="space-y-1.5 sm:col-span-2">
+            <div className="flex items-center justify-between">
+              <Label>شیفت‌بندی منو — غذاهای «فقط شیفت شب»</Label>
+              <span className="text-[10px] font-bold text-muted-foreground">بر اساس ساعات شام بالا اعمال می‌شود</span>
+            </div>
+            <DinnerOnlyCategoriesEditor businessHours={settings.businessHours} />
           </div>
         </div>
 
@@ -956,6 +1162,165 @@ function GeneralSettingsTab() {
         </Button>
       </CardContent>
     </Card>
+  );
+}
+
+// ==================== Dinner-only shift categories (شیفت‌بندی منو) ====================
+
+interface AdminCategoryRow {
+  id: string;
+  name: string;
+  icon?: string | null;
+  itemsCount: number;
+  isActive: boolean;
+  dinnerOnly: boolean;
+}
+
+/**
+ * انتخاب دسته‌های «فقط شیفت شب» — غذاهای دسته‌های انتخاب‌شده فقط در سرویس شام
+ * قابل سفارش‌اند؛ در شیفت ناهار (یا خارج از ساعات کاری) سایت و هوش نخل آن‌ها را
+ * با پیام «فقط در شیفت شب قابل سفارش است» مسدود می‌کنند.
+ */
+function DinnerOnlyCategoriesEditor({ businessHours }: { businessHours: BusinessHours }) {
+  const [cats, setCats] = useState<AdminCategoryRow[] | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [saving, setSaving] = useState(false);
+  const [dirty, setDirty] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      const res = await api<{ categories: AdminCategoryRow[] }>("/api/admin/categories");
+      if (res.success && Array.isArray(res.categories)) {
+        setCats(res.categories);
+        setSelected(new Set(res.categories.filter((c) => c.dinnerOnly).map((c) => c.id)));
+      } else {
+        setCats([]);
+      }
+    })();
+  }, []);
+
+  // وضعیت زندهٔ شیفت فعلی (به وقت ایران، هر ۳۰ ثانیه) — nowMin state + derive
+  const [nowMin, setNowMin] = useState(() => nowMinutesInRestaurantTz());
+  useEffect(() => {
+    const t = window.setInterval(() => setNowMin(nowMinutesInRestaurantTz()), 30_000);
+    return () => window.clearInterval(t);
+  }, []);
+  const openStatus = openStatusText(businessHours, nowMin);
+  const dinnerActive = isDinnerShiftNow(businessHours, nowMin);
+
+  const toggle = (id: string) => {
+    setDirty(true);
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const save = async () => {
+    setSaving(true);
+    const res = await api<{ message?: string }>("/api/admin/categories/shifts", {
+      method: "PUT",
+      body: { dinnerOnlyIds: [...selected] },
+    });
+    setSaving(false);
+    if (!res.success) return toast.error(res.error ?? "خطا در ذخیره شیفت‌بندی منو");
+    setDirty(false);
+    toast.success(res.message ?? "شیفت‌بندی منو ذخیره شد ✅");
+  };
+
+  if (cats === null) return <Skeleton className="h-44 rounded-2xl" />;
+
+  const selectedCount = selected.size;
+  const blockedItemCount = cats.filter((c) => selected.has(c.id)).reduce((s, c) => s + c.itemsCount, 0);
+
+  return (
+    <div className="rounded-2xl border border-gold/30 bg-gold/5 p-4">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2 text-sm font-extrabold">
+          <Moon className="h-4.5 w-4.5 text-gold" />
+          شیفت‌بندی منو — دسته‌های «فقط شیفت شب»
+        </div>
+        <span
+          role="status"
+          className={`flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-black ${
+            dinnerActive
+              ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400"
+              : "bg-amber-500/15 text-amber-700 dark:text-amber-400"
+          }`}
+          title={`${openStatus.label} — ${openStatus.detail} (به وقت ایران)`}
+        >
+          {dinnerActive ? <Moon className="h-3.5 w-3.5" /> : <Sun className="h-3.5 w-3.5" />}
+          {dinnerActive
+            ? "شیفت فعلی: شام — آیتم‌های شب فعال‌اند"
+            : openStatus.open
+              ? "شیفت فعلی: ناهار — آیتم‌های شب قفل‌اند"
+              : "رستوران بسته — آیتم‌های شب قفل‌اند"}
+        </span>
+      </div>
+
+      <p className="mb-3 text-[11px] leading-5 text-muted-foreground">
+        غذاهای دسته‌های انتخاب‌شده <b className="text-foreground">فقط در سرویس شام</b> قابل سفارش‌اند؛ در شیفت ناهار،
+        سایت و هوش نخل آن‌ها را با پیام «این غذا فقط در شیفت شب قابل سفارش است» مسدود می‌کنند. دسته‌های دیگر در هر دو شیفت فعال می‌مانند.
+      </p>
+
+      {cats.length === 0 ? (
+        <div className="rounded-xl border-2 border-dashed border-muted-foreground/25 px-4 py-6 text-center text-xs font-bold text-muted-foreground">
+          هنوز دسته‌ای در منو ثبت نشده است — ابتدا از «مدیریت منو» دسته‌بندی بسازید
+        </div>
+      ) : (
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+          {cats.map((c) => {
+            const on = selected.has(c.id);
+            return (
+              <button
+                key={c.id}
+                type="button"
+                onClick={() => toggle(c.id)}
+                aria-pressed={on}
+                title={on ? `غذاهای «${c.name}» فقط در شیفت شب قابل سفارش‌اند` : `غذاهای «${c.name}» در هر دو شیفت قابل سفارش‌اند`}
+                className={`flex min-h-16 items-center gap-2.5 rounded-xl border-2 p-3 text-right transition-all active:scale-[0.98] ${
+                  on
+                    ? "border-gold bg-gold/15 shadow-md shadow-gold/15"
+                    : "border-border bg-card hover:border-gold/40"
+                }`}
+              >
+                <span
+                  className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl transition-colors ${
+                    on ? "bg-slate-800 text-white dark:bg-slate-700" : "bg-muted text-muted-foreground"
+                  }`}
+                >
+                  {on ? <Moon className="h-4.5 w-4.5" /> : <CategoryIcon icon={c.icon} className="h-4.5 w-4.5" />}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className={`block truncate text-xs font-extrabold ${on ? "text-gold-foreground" : ""}`}>
+                    {c.name}
+                  </span>
+                  <span className="mt-0.5 block text-[10px] text-muted-foreground">
+                    {toPersianDigits(c.itemsCount)} قلم
+                    {!c.isActive && " • غیرفعال"}
+                  </span>
+                </span>
+                {on && <CheckCircle2 className="h-4 w-4 shrink-0 text-gold" />}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+        <span className="text-[10px] font-bold text-muted-foreground">
+          {selectedCount > 0
+            ? `${toPersianDigits(selectedCount)} دسته انتخاب شده — ${toPersianDigits(blockedItemCount)} غذا فقط در شیفت شب`
+            : "هیچ دسته‌ای انتخاب نشده — کل منو در هر دو شیفت فعال است"}
+        </span>
+        <Button onClick={save} disabled={saving || !dirty} size="sm" className="rounded-xl px-5 font-bold">
+          {saving ? <Loader2 className="ml-2 h-4 w-4 animate-spin" /> : <Save className="ml-2 h-4 w-4" />}
+          ذخیره شیفت‌بندی منو
+        </Button>
+      </div>
+    </div>
   );
 }
 

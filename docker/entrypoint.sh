@@ -7,12 +7,12 @@
 #   2. secrets bootstrap  — ADMIN_NOTIFY_KEY is generated ONCE and persisted
 #      in data/secrets.env so redeploys never invalidate live realtime keys
 #      (an explicit env var always wins and is persisted in its place)
-#   3. forward-only migrations (docker/migrate.mjs — additive, transactional)
+#   3. forward-only migrations (docker/migrate.mjs — transactional; explicit deletions may apply)
 #   4. idempotent seeding + admin bootstrap (docker/seed.mjs)
 #   5. exec the Node production server (docker/app-server.js) as PID 1
 #
 # Everything in here is safe to re-run on every container start — including
-# image upgrades — without touching existing data.
+# image upgrades — while preserving existing data except for explicitly declared migration deletions.
 # =============================================================================
 set -eu
 

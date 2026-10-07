@@ -12,7 +12,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { formatToman, formatJalali, toPersianDigits } from "@/lib/fa";
-import { formatScheduleFa } from "@/lib/schedule";
 import {
   PackageSearch,
   SearchX,
@@ -28,7 +27,6 @@ import {
   RotateCcw,
   Receipt,
   Store,
-  CalendarClock,
   Share2,
 } from "lucide-react";
 import { buildOrderShareText, shareOrderText } from "@/lib/share";
@@ -49,7 +47,6 @@ interface TrackOrder {
   taxAmount: number;
   createdAt: string;
   updatedAt: string;
-  scheduledFor?: string | null;
   items: { name: string; quantity: number }[];
   statusLogs: { status: string; label: string; note: string | null; createdAt: string }[];
 }
@@ -269,7 +266,6 @@ export function TrackView() {
         taxAmount: result.taxAmount,
         total: result.total,
         createdAt: result.createdAt,
-        scheduledFor: result.scheduledFor,
         items: result.items.map((it) => ({ name: it.name, quantity: it.quantity })),
       })
     );
@@ -419,14 +415,6 @@ export function TrackView() {
               </span>
               <span className="font-bold opacity-95">ثبت: {formatJalali(result.createdAt, true)}</span>
             </div>
-            {result.scheduledFor && !["DELIVERED", "CANCELED"].includes(result.status) && (
-              <div
-                className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-gold px-3 py-1 text-[11px] font-extrabold text-white shadow-md"
-              >
-                <CalendarClock className="h-3.5 w-3.5" />
-                پیش‌سفارش برای: {formatScheduleFa(result.scheduledFor)}
-              </div>
-            )}
           </div>
 
           <CardContent className="p-4 sm:p-5">

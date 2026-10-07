@@ -51,7 +51,7 @@ const eslintConfig = [...nextCoreWebVitals, ...nextTypescript, {
     "@typescript-eslint/no-require-imports": "off",
   },
 }, {
-  ignores: ["node_modules/**", ".next/**", "out/**", "build/**", "src/generated/**", "next-env.d.ts", "examples/**", "skills", "tool-results/**"]
+  ignores: ["node_modules/**", ".next/**", ".open-next/**", ".wrangler/**", "out/**", "build/**", "src/generated/**", "next-env.d.ts", "examples/**", "skills", "tool-results/**"]
 }];
 
 export default eslintConfig;

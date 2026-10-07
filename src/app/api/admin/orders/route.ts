@@ -63,7 +63,6 @@ export async function GET(req: NextRequest) {
         taxAmount: o.taxAmount,
         total: o.total,
         createdAt: o.createdAt.toISOString(),
-        scheduledFor: o.scheduledFor ? o.scheduledFor.toISOString() : null,
         customer: o.user
           ? `${o.user.firstName ?? ""} ${o.user.lastName ?? ""}`.trim() || o.user.phone
           : "-",

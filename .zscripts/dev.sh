@@ -125,10 +125,12 @@ echo "[BUN] Installing dependencies..."
 bun install
 log_step_end "bun install"
 
-log_step_start "Local SQLite migrations + seed (db/nakhl.db)"
-echo "[BUN] Applying local SQLite migrations (idempotent, forward-only)..."
-bun run db:setup
-log_step_end "Local SQLite migrations + seed (db/nakhl.db)"
+log_step_start "D1 local migrations + seed (Cloudflare/Miniflare)"
+echo "[BUN] Applying local Cloudflare D1 migrations (idempotent)..."
+bun run db:migrate:local
+echo "[BUN] Seeding local D1 (idempotent, INSERT OR IGNORE)..."
+bun run db:seed:local
+log_step_end "D1 local migrations + seed (Cloudflare/Miniflare)"
 
 log_step_start "Starting Next.js dev server"
 echo "[BUN] Starting development server..."

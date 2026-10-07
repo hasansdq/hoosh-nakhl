@@ -69,7 +69,6 @@ interface OrderRow {
   taxAmount: number;
   total: number;
   createdAt: string;
-  scheduledFor?: string | null;
   canReview: boolean;
   items: OrderItem[];
 }
@@ -438,7 +437,6 @@ export function OrdersView() {
         total: order.total,
         paymentRef: order.paymentRef,
         createdAt: order.createdAt,
-        scheduledFor: order.scheduledFor,
         items: order.items.map((it) => ({ name: it.name, quantity: it.quantity })),
       })
     );
@@ -568,17 +566,6 @@ export function OrdersView() {
                   </div>
                 </div>
                 <div className="flex flex-wrap items-center gap-1.5">
-                  {order.scheduledFor && (
-                    <span
-                      className="flex items-center gap-1 rounded-lg bg-gold/15 px-2.5 py-1 text-[11px] font-bold text-gold-foreground"
-                      title={`زمان تحویل: ${formatJalali(order.scheduledFor, true)}`}
-                    >
-                      📅 پیش‌سفارش
-                      <span className="text-[10px] font-semibold opacity-80">
-                        {formatJalali(order.scheduledFor, true)}
-                      </span>
-                    </span>
-                  )}
                   <span className={`rounded-lg px-2.5 py-1 text-[11px] font-bold ${STATUS_COLORS[order.status] ?? ""}`}>
                     {order.statusLabel}
                   </span>
