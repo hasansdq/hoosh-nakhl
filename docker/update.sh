@@ -21,6 +21,15 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
+source docker/progress.sh
+BUILD_LOG=""
+cleanup() {
+  nakhl_stop_timer
+  [ -z "${BUILD_LOG}" ] || rm -f "${BUILD_LOG}"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 bold() { printf '\033[1m%s\033[0m\n' "$1"; }
 ok()   { printf '  \033[32m✓\033[0m %s\n' "$1"; }
@@ -61,15 +70,19 @@ bold "═══ رستوران نخل — به‌روزرسانی ═══"
 
 # ۱) بک‌اپ پیش از به‌روزرسانی
 bold "گام ۱/۴ — بک‌اپ دیتابیس…"
-bash docker/backup.sh
+nakhl_timed "بک‌آپ دیتابیس" bash docker/backup.sh
 
 # ۲) ساخت ایمیج جدید
 bold "گام ۲/۴ — ساخت ایمیج جدید…"
 net_preflight
 BUILD_LOG="$(mktemp /tmp/nakhl-build-XXXXXX.log)"
-trap 'rm -f "${BUILD_LOG}"' EXIT
 
-if ! docker compose build 2>&1 | tee "${BUILD_LOG}"; then
+
+build_image() {
+  # Explicitly propagate pipeline failures even when called in an if condition.
+  DOCKER_BUILDKIT=1 docker compose --progress plain build 2>&1 | tee "${BUILD_LOG}"
+}
+if ! nakhl_timed "ساخت ایمیج و بررسی TypeScript" build_image; then
   bold "✗ ساخت ایمیج شکست خورد — هیچ چیزی تغییر نکرده است:"
   echo  "    • کانتینر فعلی همچنان در حال سرویس‌دهی است (نسخهٔ قبلی)"
   echo  "    • بک‌اپ گام ۱ گرفته شده است (docker/restore.sh در صورت نیاز)"
@@ -104,13 +117,18 @@ fi
 bold "گام ۳/۴ — تست ارتقا و محافظت از داده‌های حذف‌شونده…"
 
 # ۳-الف) شبیه‌سازی کامل ارتقا روی دیتابیس آزمایشیِ دارای سفارش (ایمیج جدید؛ دیتای واقعی دست‌نخورده)
-if ! docker compose run --rm -T --no-deps --entrypoint node app scripts/upgrade-test.mjs; then
+if ! nakhl_timed "تست حفظ سفارش‌ها" docker compose run --rm -T --no-deps --entrypoint node app scripts/upgrade-test.mjs; then
   bold "✗ تست ارتقا شکست خورد (DATA LOSS یا خطای اجرا) — جایگزینی کانتینر لغو شد:"
   echo  "    • کانتینر فعلی همچنان در حال سرویس‌دهی است (نسخهٔ قبلی)"
   echo  "    • بک‌آپ گام ۱ موجود است؛ لاگ بالا را بررسی و مشکل را رفع کنید"
   exit 1
 fi
 ok "تست ارتقا پاس شد: سفارش‌ها/اقلام/لاگ‌ها در شبیه‌سازی سالم ماندند"
+
+if ! nakhl_timed "تست اتمی‌بودن مهاجرت" docker compose run --rm -T --no-deps --entrypoint node app scripts/migration-test.mjs; then
+  bold "✗ تست مهاجرت شکست خورد — کانتینر فعلی جایگزین نشد"
+  exit 1
+fi
 
 # ۳-ب) خروجی JSON خوانا از داده‌هایی که این ارتقا برای همیشه حذف می‌کند (روی volume واقعی)
 if EXPORT_LOG="$(docker compose run --rm -T --no-deps --entrypoint node app scripts/export-dropped.mjs 2>/dev/null)"; then
@@ -146,14 +164,15 @@ fi
 echo
 # ۳) جایگزینی کانتینر (volume دست‌نخورده)
 bold "گام ۴/۴ — جایگزینی کانتینر…"
-docker compose up -d
+nakhl_timed "راه‌اندازی کانتینر" docker compose up -d
 
 # منتظر healthy شدن بمانیم
-for i in $(seq 1 45); do
+for i in $(seq 1 90); do
   STATE="$(docker inspect --format '{{.State.Health.Status}}' nakhl-app 2>/dev/null || echo starting)"
   [ "$STATE" = "healthy" ] && { ok "کانتینر جدید healthy شد"; break; }
-  [ "$i" = "45" ] && { echo "  ⚠ هنوز healthy نیست — لاگ: docker compose logs --tail=100 app"; exit 1; }
-  sleep 2
+  [ "$i" = "90" ] && { echo "  ⚠ هنوز healthy نیست — لاگ: docker compose logs --tail=100 app"; exit 1; }
+  printf '⏱ انتظار برای سلامت: %s ثانیه | وضعیت: %s\n' "$SECONDS" "$STATE"
+  sleep 1
 done
 
 # پاک‌سازی ایمیج‌های قدیمی بی‌استفاده (volume ها را هرگز لمس نمی‌کند)

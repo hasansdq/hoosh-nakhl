@@ -10,8 +10,8 @@
 # Every feature used below (multi-stage, COPY --from, ARG, ENV, HEALTHCHECK,
 # VOLUME, USER) is supported by the dockerfile frontend BUNDLED inside Docker
 # Engine itself — with the two base images cached locally, this build needs
-# ZERO registry/network access. (If you ever add heredocs, --mount or
-# COPY --link, reconsider — but keep VPS offline-build capability in mind.)
+# no extra Dockerfile-frontend download. Package installation still needs
+# network access. Cache mounts use bundled BuildKit (Docker Engine 23+).
 # -----------------------------------------------------------------------------
 # Build:    docker compose build          (or docker build -t nakhl-restaurant .)
 # Runtime:  ONE Node.js process — docker/app-server.js boots the Next.js
@@ -29,6 +29,16 @@
 # 127.0.0.1:8080 (host) by docker-compose.yml — DirectAdmin's Apache owns
 #  ports 80/443 on the VPS and reverse-proxies to this container.
 # =============================================================================
+
+# Runtime-only dependencies: modules that the app loads through bundler-
+# excluded dynamic imports (@libsql, socket.io server, optional ZAI SDK)
+# are NOT part of webpack's output-file tracing — install them explicitly
+# and merge them into the standalone node_modules tree. sharp serves
+# /_next/image optimization. Versions are pinned to the tested lockfile.
+FROM oven/bun:1 AS runtime-deps
+WORKDIR /runtime-deps
+RUN echo '{"name":"nakhl-runtime-deps","private":true}' > package.json \
+ && bun add --exact @libsql/client@0.18.0 @prisma/adapter-libsql@6.19.3 socket.io@4.8.3 sharp@0.34.5 z-ai-web-dev-sdk@0.0.18
 
 # ---------- Stage 1: builder ----------
 FROM oven/bun:1 AS builder
@@ -57,18 +67,10 @@ ENV NAKHL_DOCKER_BUILD=1 \
     NEXT_TELEMETRY_DISABLED=1
 
 # Production build → .next/standalone
-RUN bun run build
+RUN --mount=type=cache,id=nakhl-next-cache,target=/app/.next/cache,sharing=locked \
+    bun run build
 
-# Runtime-only dependencies: modules that the app loads through bundler-
-# excluded dynamic imports (@libsql, socket.io server, optional ZAI SDK)
-# are NOT part of webpack's output-file tracing — install them explicitly
-# and merge them into the standalone node_modules tree. sharp serves
-# /_next/image optimization. Versions are pinned to the tested lockfile.
-RUN mkdir -p /runtime-deps \
- && cd /runtime-deps \
- && echo '{"name":"nakhl-runtime-deps","private":true}' > package.json \
- && bun add --exact @libsql/client@0.18.0 @prisma/adapter-libsql@6.19.3 socket.io@4.8.3 sharp@0.34.5 z-ai-web-dev-sdk@0.0.18 \
- && cp -r /runtime-deps/node_modules/. /app/.next/standalone/node_modules/
+COPY --from=runtime-deps /runtime-deps/node_modules/ /app/.next/standalone/node_modules/
 
 # ---------- Stage 2: runner ----------
 FROM node:22-slim AS runner

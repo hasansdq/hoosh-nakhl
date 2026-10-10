@@ -13,6 +13,15 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
+source docker/progress.sh
+BUILD_LOG=""
+cleanup() {
+  nakhl_stop_timer
+  [ -z "${BUILD_LOG}" ] || rm -f "${BUILD_LOG}"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 ROOT_DIR="$(pwd)"
 
 bold()  { printf '\033[1m%s\033[0m\n' "$1"; }
@@ -67,9 +76,13 @@ fi
 bold "ساخت ایمیج (چند دقیقه — لایه‌ها کش می‌شوند)…"
 net_preflight
 BUILD_LOG="$(mktemp /tmp/nakhl-deploy-XXXXXX.log)"
-trap 'rm -f "${BUILD_LOG}"' EXIT
 
-if ! docker compose build 2>&1 | tee "${BUILD_LOG}"; then
+
+build_image() {
+  # Explicitly propagate pipeline failures even when called in an if condition.
+  DOCKER_BUILDKIT=1 docker compose --progress plain build 2>&1 | tee "${BUILD_LOG}"
+}
+if ! nakhl_timed "ساخت ایمیج و بررسی TypeScript" build_image; then
   bold "✗ ساخت ایمیج شکست خورد — استقرار ناتمام ماند (هنوز چیزی سرویس‌دهی نمی‌کند)"
   echo
   if grep -qiE 'proxyconnect|deadline ?exceeded|i/o timeout|failed to resolve' "${BUILD_LOG}"; then
@@ -98,23 +111,24 @@ if ! docker compose build 2>&1 | tee "${BUILD_LOG}"; then
 fi
 
 bold "راه‌اندازی کانتینر…"
-docker compose up -d
+nakhl_timed "راه‌اندازی کانتینر" docker compose up -d
 
 # ---------- 3. انتظار برای سلامت ----------
 PORT="$(grep -E '^NAKHL_PORT=' .env | cut -d= -f2 || true)"
 PORT="${PORT:-8080}"
 bold "انتظار برای healthy شدن (مهاجرت دیتابیس + سید اولین بوت)…"
-for i in $(seq 1 60); do
+for i in $(seq 1 120); do
   STATE="$(docker inspect --format '{{.State.Health.Status}}' nakhl-app 2>/dev/null || echo starting)"
   if [ "$STATE" = "healthy" ]; then
     ok "کانتینر healthy شد (${i}×۲ ثانیه)"
     break
   fi
-  if [ "$i" = "60" ]; then
+  if [ "$i" = "120" ]; then
     err "کانتینر healthy نشد — لاگ‌ها: docker compose logs --tail=100 app"
     exit 1
   fi
-  sleep 2
+  printf '⏱ انتظار برای سلامت: %s ثانیه | وضعیت: %s\n' "$SECONDS" "$STATE"
+  sleep 1
 done
 
 HTTP_CODE="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:${PORT}/api/health" || true)"

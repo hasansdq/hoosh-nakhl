@@ -1,4 +1,5 @@
 import type { NextConfig } from "next";
+import { PHASE_DEVELOPMENT_SERVER } from "next/constants";
 import { initOpenNextCloudflareForDev } from "@opennextjs/cloudflare";
 
 /**
@@ -24,14 +25,6 @@ import { initOpenNextCloudflareForDev } from "@opennextjs/cloudflare";
  * for CF builds only, so local dev and the Docker image (sharp is installed
  * in the runtime stage) keep the sharp-based optimizer.
  */
-// Only initialize the Miniflare-backed Cloudflare context for the dev server
-// (NEXT_PHASE is "phase-production-build" while `next build` runs — spinning
-// up Miniflare there would waste memory and warn about Durable Object
-// classes that only exist in the deployable worker, not the proxy).
-if (process.env.NEXT_PHASE !== "phase-production-build") {
-  initOpenNextCloudflareForDev();
-}
-
 const isCloudflareBuild = process.env.NEXT_PUBLIC_CF_BUILD === "1";
 const isDockerBuild = process.env.NAKHL_DOCKER_BUILD === "1";
 
@@ -89,4 +82,11 @@ const nextConfig: NextConfig = {
   },
 };
 
-export default nextConfig;
+// Next passes the actual phase to this function. NEXT_PHASE is not a reliable
+// environment variable; never start the development emulator during a build.
+export default function configureNext(phase: string): NextConfig {
+  if (phase === PHASE_DEVELOPMENT_SERVER) {
+    initOpenNextCloudflareForDev();
+  }
+  return nextConfig;
+}

@@ -8,6 +8,7 @@
 
 # --- VCS / meta ---
 .git
+.github
 .gitignore
 *.md
 
@@ -48,6 +49,10 @@ docker/backups
 backups
 # sandbox artifacts (uploaded reference files)
 upload
+
+# Old sandbox seed/image scripts use the obsolete Prisma client. Docker uses
+# docker/seed.mjs and SQL seeds; only schema.prisma is needed for generation.
+prisma/*.ts
 
 # --- misc repo files not needed at runtime ---
 scripts

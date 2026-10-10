@@ -15,8 +15,22 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+      - name: Verify timer and safe update failure handling
+        run: python3 tests/update-progress.py
       - name: Build production image
         run: docker build -t nakhl-validation .
+      - name: Verify cached TypeScript checking rejects errors
+        run: |
+          printf 'export const nakhlCacheTypeTest: number = "must fail";\n' > src/nakhl-cache-type-test.ts
+          if docker build --progress plain -t nakhl-cache-negative . > /tmp/nakhl-cache-negative.log 2>&1; then
+            cat /tmp/nakhl-cache-negative.log
+            echo "ERROR: cached build accepted a TypeScript error"
+            exit 1
+          fi
+          cat /tmp/nakhl-cache-negative.log
+          grep -q 'nakhl-cache-type-test.ts' /tmp/nakhl-cache-negative.log
+          grep -q 'Type error:' /tmp/nakhl-cache-negative.log
+          rm src/nakhl-cache-type-test.ts
       - name: Verify database upgrade in production image
         run: docker run --rm --entrypoint node nakhl-validation scripts/upgrade-test.mjs
       - name: Verify atomic migration completion and restart
