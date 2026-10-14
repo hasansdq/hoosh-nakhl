@@ -110,8 +110,7 @@ export function ProfileView() {
     const fd = new FormData();
     fd.append("file", file);
     try {
-      const res = await fetch("/api/profile/avatar", { method: "POST", body: fd });
-      const data = await res.json();
+      const data = await api<{ url?: string }>("/api/profile/avatar", { formData: fd });
       clearInterval(timer);
       if (data.success) {
         setUploadProgress(100);

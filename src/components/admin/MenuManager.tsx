@@ -211,13 +211,14 @@ export function MenuManager({ initialFilter }: { initialFilter?: string } = {}) 
     fd.append("file", file);
     fd.append("kind", "food");
     try {
-      // admin-authenticated generic image upload endpoint (R2-backed)
-      const res = await fetch("/api/admin/upload", { method: "POST", body: fd });
-      const data = await res.json();
+      // admin-authenticated generic image upload endpoint (R2 / volume-backed)
+      const data = await api<{ url?: string; size?: number }>("/api/admin/upload", {
+        formData: fd,
+      });
       clearInterval(timer);
-      if (data.success) {
+      if (data.success && data.url) {
         setUploadProgress(100);
-        setForm((f) => ({ ...f, imageUrl: data.url }));
+        setForm((f) => ({ ...f, imageUrl: data.url as string }));
         toast.success("تصویر آپلود شد 🖼");
       } else {
         toast.error(data.error ?? "خطا در آپلود");
@@ -250,11 +251,10 @@ export function MenuManager({ initialFilter }: { initialFilter?: string } = {}) 
     try {
       const fd = new FormData();
       for (const f of list) fd.append("files", f);
-      const res = await fetch(`/api/admin/menu/${editing.id}/gallery`, {
-        method: "POST",
-        body: fd,
-      });
-      const data = await res.json();
+      const data = await api<{ urls?: string[]; errors?: { name: string; error: string }[] }>(
+        `/api/admin/menu/${editing.id}/gallery`,
+        { formData: fd },
+      );
       clearInterval(timer);
       if (data.success) {
         setGalleryProgress(100);

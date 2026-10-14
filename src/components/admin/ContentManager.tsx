@@ -261,10 +261,11 @@ export function ContentManager() {
     const fd = new FormData();
     fd.append("file", file);
     try {
-      const res = await fetch("/api/admin/upload", { method: "POST", body: fd });
-      const data = await res.json();
+      const data = await api<{ url?: string; size?: number }>("/api/admin/upload", {
+        formData: fd,
+      });
       if (data.success && data.url) {
-        setEdits((prev) => ({ ...prev, [key]: data.url }));
+        setEdits((prev) => ({ ...prev, [key]: data.url as string }));
         toast.success("تصویر آپلود شد — برای اعمال، ذخیره کنید");
       } else {
         toast.error(data.error ?? "خطا در آپلود تصویر");

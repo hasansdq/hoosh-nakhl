@@ -37,7 +37,9 @@ jobs:
         run: docker run --rm --entrypoint node nakhl-validation scripts/migration-test.mjs
       - name: Start production app with temporary data
         run: |
+          docker volume create nakhl-validation-data
           docker run -d --name nakhl-validation -p 127.0.0.1:8080:3000 \
+            -v nakhl-validation-data:/app/data \
             -e NAKHL_SEED_PROFILE=prod -e ZARINPAL_FORCE_REAL=1 nakhl-validation
           for attempt in $(seq 1 60); do
             if curl --fail --silent http://127.0.0.1:8080/api/health; then
@@ -46,8 +48,11 @@ jobs:
             sleep 2
           done
           exit 1
+      - name: Verify production upload routes and persistence
+        run: NAKHL_UPLOAD_SMOKE=1 node tests/upload-smoke.mjs
       - name: Show logs and clean up temporary data
         if: always()
         run: |
           docker logs nakhl-validation 2>/dev/null || true
           docker rm -fv nakhl-validation 2>/dev/null || true
+          docker volume rm nakhl-validation-data 2>/dev/null || true

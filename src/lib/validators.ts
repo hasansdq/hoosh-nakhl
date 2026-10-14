@@ -77,7 +77,10 @@ export const menuItemSchema = z.object({
         .trim()
         .max(300)
         .regex(
-          /^(\/uploads\/|\/food\/|https?:\/\/).+$/,
+          // /f/ = canonical upload URL (R2 / Docker volume, served by the
+          // /f/[...key] route) · /uploads/ = legacy pre-R2 rows · /food/ =
+          // static seed images · https:// = external URLs
+          /^(\/f\/|\/uploads\/|\/food\/|https?:\/\/).+$/,
           "آدرس تصویر گالری نامعتبر است"
         )
     )
