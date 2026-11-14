@@ -20,6 +20,7 @@
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createClient } from "@libsql/client";
+import { snapshotData, assertDataUnchanged } from "./data-integrity.mjs";
 
 const DB_PATH = process.env.NAKHL_SQLITE_PATH;
 const MIGRATIONS_DIR = process.env.NAKHL_MIGRATIONS_DIR ?? "/app/migrations";
@@ -98,23 +99,20 @@ async function main() {
     const sql = await readFile(join(MIGRATIONS_DIR, name), "utf8");
     console.log(`[migrate] ▶ applying ${name} (${sql.length} bytes)…`);
 
+    const tx = await client.transaction("write");
     try {
-      // Wrap in an explicit transaction: either the whole file lands or none
-      // of it does. (Our migration files contain plain SQLite DDL/DML — no
-      // PRAGMA/BEGIN inside, verified in CI — so wrapping is safe.)
-      // SQL filenames come from disk; escape quotes before embedding the name.
-      const recordedName = name.replace(/'/g, "''");
-      await client.executeMultiple(
-        `BEGIN;\n${sql}\nINSERT INTO "_nakhl_migrations" ("name") VALUES ('${recordedName}');\nCOMMIT;`,
-      );
+      const before = await snapshotData(tx);
+      await tx.executeMultiple(sql);
+      await assertDataUnchanged(tx, before);
+      const violations = await tx.execute("PRAGMA foreign_key_check");
+      if (violations.rows.length) throw new Error("foreign_key_check failed before commit");
+      await tx.execute({ sql: 'INSERT INTO "_nakhl_migrations" ("name") VALUES (?)', args: [name] });
+      await tx.commit();
     } catch (e) {
-      // make sure a failed transaction is rolled back before we abort
-      try {
-        await client.execute("ROLLBACK");
-      } catch {
-        /* already rolled back / no active transaction */
-      }
-      fatal(`migration ${name} failed: ${e.message}`);
+      await tx.rollback().catch(() => {});
+      throw new Error(`migration ${name} rolled back: ${e.message}`);
+    } finally {
+      tx.close();
     }
 
     console.log(`[migrate] ✓ ${name} applied`);

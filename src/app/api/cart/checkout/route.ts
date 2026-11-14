@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { ok, fail, requireUser, logAudit } from "@/lib/api";
 import { getSettings, type PaymentSettings, type GeneralSettings } from "@/lib/settings";
 import { closedMessage, dinnerOnlyMessage, isDinnerShiftNow, isOpenNow } from "@/lib/hours";
+import { recordPaymentAttempt } from "@/lib/payment/attempts";
 import { zarinpalRequest } from "@/lib/payment/zarinpal";
 import { getPublicOrigin } from "@/lib/public-url";
 import { computePricing } from "@/lib/chat/engine";
@@ -80,7 +81,7 @@ export async function POST(req: NextRequest) {
       })
       .filter((x): x is NonNullable<typeof x> => x !== null);
 
-    if (items.length === 0) {
+    if (items.length !== seen.size) {
       return fail("آیتم‌های سبد دیگر معتبر نیستند. لطفاً سبد خود را به‌روز کنید");
     }
 
@@ -134,6 +135,8 @@ export async function POST(req: NextRequest) {
       data: {
         orderNumber: genOrderNumber(),
         userId: user.id,
+        customerPhone: user.phone,
+        customerName: `${user.firstName ?? ""} ${user.lastName ?? ""}`.trim() || null,
         type: deliveryMethod,
         status: "PENDING_PAYMENT",
         address: deliveryMethod === "DELIVERY" ? address : null,
@@ -195,10 +198,7 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    await db.order.update({
-      where: { id: order.id },
-      data: { paymentAuthority: payResult.authority },
-    });
+    await recordPaymentAttempt(order.id, payResult.authority, paymentSettings);
 
     await logAudit(user.id, "PAYMENT_REQUESTED", {
       entity: "order",

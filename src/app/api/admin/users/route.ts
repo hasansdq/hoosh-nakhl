@@ -35,7 +35,7 @@ export async function GET(req: NextRequest) {
         take: pageSize,
         select: {
           id: true, phone: true, firstName: true, lastName: true, nationalId: true,
-          email: true, birthDate: true, gender: true, avatarUrl: true, status: true,
+          email: true, birthDate: true, gender: true, avatarUrl: true, status: true, role: true,
           lastLoginAt: true, createdAt: true,
           orders: { select: { total: true, paymentStatus: true } },
         },
@@ -57,6 +57,7 @@ export async function GET(req: NextRequest) {
           gender: u.gender,
           avatarUrl: u.avatarUrl,
           status: u.status,
+          role: u.role,
           lastLoginAt: u.lastLoginAt?.toISOString() ?? null,
           createdAt: u.createdAt.toISOString(),
           ordersCount: u.orders.length,

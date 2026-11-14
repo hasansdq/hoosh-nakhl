@@ -113,9 +113,9 @@ COPY --from=builder /app/public ./public
 #                    node scripts/upgrade-test.mjs) proving order data survives
 # export-dropped.mjs — pre-upgrade JSON export of structures a migration drops
 COPY docker/app-server.js ./app-server.js
-COPY docker/migrate.mjs docker/seed.mjs docker/backup.mjs docker/restore.mjs docker/upgrade-test.mjs docker/export-dropped.mjs docker/migration-test.mjs ./scripts/
+COPY docker/migrate.mjs docker/seed.mjs docker/backup.mjs docker/restore.mjs docker/upgrade-test.mjs docker/export-dropped.mjs docker/migration-test.mjs docker/data-integrity.mjs docker/data-preservation-test.mjs ./scripts/
 COPY migrations ./migrations
-COPY seed ./seed
+# Demo SQL is deliberately excluded from the production runtime.
 COPY docker/entrypoint.sh /usr/local/bin/nakhl-entrypoint
 
 RUN chmod +x /usr/local/bin/nakhl-entrypoint \

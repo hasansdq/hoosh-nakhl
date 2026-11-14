@@ -8,7 +8,7 @@
 #      in data/secrets.env so redeploys never invalidate live realtime keys
 #      (an explicit env var always wins and is persisted in its place)
 #   3. forward-only migrations (docker/migrate.mjs — transactional; explicit deletions may apply)
-#   4. idempotent seeding + admin bootstrap (docker/seed.mjs)
+#   4. no automatic seeding or account creation
 #   5. exec the Node production server (docker/app-server.js) as PID 1
 #
 # Everything in here is safe to re-run on every container start — including
@@ -94,9 +94,9 @@ if [ -n "${ADMIN_PASSWORD:-}" ]; then
   log "note: ADMIN_PASSWORD was set through the environment — change it from the admin panel after first login, then remove it from .env"
 fi
 
-# ---------- 4. idempotent seed + admin bootstrap -------------------------------
-log "seeding (idempotent — existing rows and admin credentials preserved)…"
-node "${APP_DIR}/scripts/seed.mjs"
+# ---------- 4. preserve all existing business data ----------------------------
+
+log "automatic seed disabled — no business data or accounts are inserted at startup"
 
 # ---------- 5. hand over to the production server ------------------------------
 log "starting Nakhl production server on ${PORT:-3000}…"

@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { ok, fail, requireUser, logAudit } from "@/lib/api";
 import { getSettings, type PaymentSettings, type GeneralSettings } from "@/lib/settings";
 import { closedMessage, dinnerOnlyMessage, isDinnerShiftNow, isOpenNow } from "@/lib/hours";
+import { recordPaymentAttempt } from "@/lib/payment/attempts";
 import { zarinpalRequest } from "@/lib/payment/zarinpal";
 import { getPublicOrigin } from "@/lib/public-url";
 import { parseDraft, computePricing } from "@/lib/chat/engine";
@@ -69,17 +70,14 @@ export async function POST(req: NextRequest) {
       });
 
       if (!payResult0.success || !payResult0.authority) {
-        await db.order.update({
-          where: { id: retryOrder.id },
+        await db.order.updateMany({
+          where: { id: retryOrder.id, paymentStatus: { not: "PAID" }, paymentAuthority: retryOrder.paymentAuthority },
           data: { status: "PAYMENT_FAILED", paymentStatus: "FAILED", paymentError: payResult0.message ?? "خطای ایجاد تراکنش" },
         });
         return fail(`خطا در اتصال به درگاه پرداخت: ${payResult0.message ?? "نامشخص"}`, 502);
       }
 
-      await db.order.update({
-        where: { id: retryOrder.id },
-        data: { paymentAuthority: payResult0.authority, paymentError: null },
-      });
+      await recordPaymentAttempt(retryOrder.id, payResult0.authority, paymentSettings0);
       await db.orderStatusLog.create({
         data: { orderId: retryOrder.id, status: "PENDING_PAYMENT", note: "درخواست پرداخت مجدد از هوش نخل" },
       });
@@ -134,7 +132,7 @@ export async function POST(req: NextRequest) {
       })
       .filter((x): x is NonNullable<typeof x> => x !== null);
 
-    if (items.length === 0) return fail("آیتم‌های سبد دیگر معتبر نیستند. لطفاً دوباره انتخاب کنید");
+    if (items.length !== draft.items.length) return fail("آیتم‌های سبد دیگر معتبر نیستند. لطفاً دوباره انتخاب کنید");
 
     // ---- گیت «فقط شیفت شب»: خارج از سرویس شام، آیتم دسته‌های dinner-only پذیرفته نمی‌شود ----
     if (!isDinnerShiftNow(generalGate.businessHours)) {
@@ -185,6 +183,10 @@ export async function POST(req: NextRequest) {
         userId: user.id,
         type: draft.deliveryMethod,
         status: "PENDING_PAYMENT",
+        // اسنپ‌شات اطلاعات مشتری هنگام ثبت — مبنای پنل مدیریت و فاکتور باران؛
+        // حتی اگر مشتری بعداً پروفایلش را تغییر دهد، سوابق تاریخی دست‌نخورده می‌ماند
+        customerPhone: user.phone,
+        customerName: `${user.firstName ?? ""} ${user.lastName ?? ""}`.trim() || null,
         address: draft.deliveryMethod === "DELIVERY" ? address : null,
         note: body.note?.slice(0, 300) ?? null,
         subtotal: pricing.subtotal,
@@ -243,10 +245,7 @@ export async function POST(req: NextRequest) {
       return fail(`خطا در اتصال به درگاه پرداخت: ${payResult.message ?? "نامشخص"}`, 502, { orderId: order.id, orderNumber: order.orderNumber });
     }
 
-    await db.order.update({
-      where: { id: order.id },
-      data: { paymentAuthority: payResult.authority },
-    });
+    await recordPaymentAttempt(order.id, payResult.authority, paymentSettings);
 
     // chat: "در انتظار پرداخت" card right after the invoice — if the gateway is
     // abandoned, this is what the customer sees on return (with retry + edit)

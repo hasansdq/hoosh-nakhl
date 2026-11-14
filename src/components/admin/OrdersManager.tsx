@@ -33,6 +33,13 @@ import {
   Store,
   RefreshCw,
   Clock,
+  Phone,
+  MapPin,
+  CreditCard,
+  TicketPercent,
+  FileText,
+  User,
+  Mail,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -51,14 +58,26 @@ interface OrderRow {
   subtotal: number;
   deliveryFee: number;
   taxAmount: number;
+  discount: number;
+  couponCode: string | null;
   total: number;
   createdAt: string;
+  paidAt: string | null;
   customer: string;
   customerPhone: string;
+  baranFactorNumber: number | null;
+  baranSentAt: string | null;
   items: { id: string; name: string; quantity: number; lineTotal: number }[];
 }
 
 interface OrderDetail extends OrderRow {
+  paymentCard: string | null;
+  taxRate: number;
+  customerEmail: string | null;
+  customerUserId: string | null;
+  customerStatus: string | null;
+  statusLabel: string;
+  items: { id: string; name: string; unitPrice: number; quantity: number; lineTotal: number; menuItemId: string | null }[];
   statusLogs: { id: string; status: string; note: string | null; createdAt: string }[];
 }
 
@@ -128,6 +147,8 @@ export function OrdersManager({ initialFilter }: { initialFilter?: string } = {}
     const res = await api<{ order: OrderDetail }>(`/api/admin/orders/${order.id}`);
     if (res.success) {
       setDetail(res.order ?? null);
+    } else {
+      toast.error(res.error ?? "خطا در بارگذاری سفارش");
     }
   };
 
@@ -219,7 +240,7 @@ export function OrdersManager({ initialFilter }: { initialFilter?: string } = {}
                     {o.type === "DELIVERY" ? <Bike className="h-5 w-5" /> : <Store className="h-5 w-5" />}
                   </div>
                   <div>
-                    <div className="flex items-center gap-2 text-sm font-black">
+                    <div className="flex flex-wrap items-center gap-2 text-sm font-black">
                       <span dir="ltr">{o.orderNumber}</span>
                       <span
                         className={`rounded-md px-1.5 py-0.5 text-[10px] font-bold ${
@@ -232,9 +253,21 @@ export function OrdersManager({ initialFilter }: { initialFilter?: string } = {}
                       >
                         {o.statusLabel}
                       </span>
+                      {o.baranFactorNumber != null && (
+                        <span
+                          className={`rounded-md px-1.5 py-0.5 text-[10px] font-bold ${o.baranSentAt ? "bg-emerald-500/10 text-emerald-600" : "bg-amber-500/10 text-amber-600"}`}
+                          title={o.baranSentAt ? "فاکتور در نرم‌افزار باران ثبت شده" : "در صف ارسال به نرم‌افزار باران"}
+                        >
+                          باران {toPersianDigits(o.baranFactorNumber)}
+                        </span>
+                      )}
                     </div>
-                    <div className="mt-0.5 text-[11px] text-muted-foreground">
-                      {o.customer} • {toPersianDigits(o.items.length)} قلم • {timeAgo(o.createdAt)}
+                    <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
+                      <span>{o.customer}</span>
+                      <span>•</span>
+                      <span dir="ltr">{o.customerPhone !== "-" ? o.customerPhone : ""}</span>
+                      <span>•</span>
+                      <span>{toPersianDigits(o.items.length)} قلم • {timeAgo(o.createdAt)}</span>
                     </div>
                   </div>
                 </div>
@@ -265,40 +298,87 @@ export function OrdersManager({ initialFilter }: { initialFilter?: string } = {}
 
       {/* detail dialog */}
       <Dialog open={!!detail} onOpenChange={(open) => !open && setDetail(null)}>
-        <DialogContent className="max-h-[90vh] max-w-xl overflow-y-auto rounded-2xl" aria-describedby={undefined}>
+        <DialogContent className="max-h-[92vh] max-w-2xl overflow-y-auto rounded-2xl" aria-describedby={undefined}>
           {detail && (
             <>
               <DialogHeader>
-                <DialogTitle className="flex items-center gap-2">
+                <DialogTitle className="flex flex-wrap items-center gap-2">
                   جزئیات سفارش
                   <span dir="ltr" className="rounded-lg bg-muted px-2 py-0.5 text-sm">
                     {detail.orderNumber}
                   </span>
+                  <span
+                    className={`rounded-md px-1.5 py-0.5 text-[10px] font-bold ${
+                      detail.paymentStatus === "PAID"
+                        ? "bg-emerald-500/10 text-emerald-600"
+                        : detail.paymentStatus === "FAILED"
+                          ? "bg-red-500/10 text-red-600"
+                          : "bg-amber-500/10 text-amber-600"
+                    }`}
+                  >
+                    {detail.statusLabel}
+                  </span>
                 </DialogTitle>
                 <DialogDescription>
-                  {detail.customer} — <span dir="ltr">{detail.customerPhone}</span> • {formatJalali(detail.createdAt, true)}
+                  {formatJalali(detail.createdAt, true)} — ثبت {timeAgo(detail.createdAt)}
                 </DialogDescription>
               </DialogHeader>
 
               <div className="space-y-4">
+                {/* customer block — phone + name + address */}
+                <div className="rounded-xl border p-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 text-sm font-bold">
+                      <User className="h-4 w-4 text-primary" />
+                      {detail.customer}
+                      {detail.customerStatus === "BLOCKED" && (
+                        <Badge variant="destructive" className="text-[9px]">کاربر مسدود</Badge>
+                      )}
+                    </div>
+                    {detail.customerPhone && detail.customerPhone !== "-" && (
+                      <a
+                        href={`tel:${detail.customerPhone}`}
+                        className="flex items-center gap-1.5 rounded-lg bg-primary/10 px-2.5 py-1.5 text-xs font-black text-primary transition hover:bg-primary/20"
+                        title="تماس با مشتری"
+                      >
+                        <Phone className="h-3.5 w-3.5" />
+                        <span dir="ltr">{toPersianDigits(detail.customerPhone)}</span>
+                      </a>
+                    )}
+                  </div>
+                  {(detail.customerEmail || detail.customerUserId) && (
+                    <div className="mt-1.5 flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                      {detail.customerEmail && (
+                        <>
+                          <Mail className="h-3 w-3" />
+                          <span dir="ltr">{detail.customerEmail}</span>
+                        </>
+                      )}
+                    </div>
+                  )}
+                  {detail.address && (
+                    <div className="mt-2 flex items-start gap-1.5 rounded-lg bg-muted/60 px-2.5 py-2 text-xs leading-6">
+                      <MapPin className="mt-0.5 h-3.5 w-3.5 shrink-0 text-gold-foreground" />
+                      <span><b className="text-primary">آدرس تحویل:</b> {detail.address}</span>
+                    </div>
+                  )}
+                </div>
+
                 {/* items */}
                 <div className="space-y-1.5">
                   {detail.items.map((item) => (
                     <div key={item.id} className="flex items-center justify-between rounded-xl bg-muted/50 px-3 py-2 text-sm">
                       <span className="font-semibold">
                         {item.name}
-                        <span className="mr-1 text-xs text-muted-foreground">×{toPersianDigits(item.quantity)}</span>
+                        <span className="mr-1 text-xs text-muted-foreground">
+                          ×{toPersianDigits(item.quantity)} — {formatToman(item.unitPrice)}
+                        </span>
                       </span>
                       <span className="text-muted-foreground">{formatToman(item.lineTotal)}</span>
                     </div>
                   ))}
                 </div>
 
-                {detail.address && (
-                  <div className="rounded-xl border px-3 py-2.5 text-xs leading-6">
-                    <b className="text-primary">آدرس تحویل:</b> {detail.address}
-                  </div>
-                )}
                 {detail.note && (
                   <div className="rounded-xl border px-3 py-2.5 text-xs leading-6">
                     <b className="text-gold">یادداشت مشتری:</b> {detail.note}
@@ -312,11 +392,21 @@ export function OrdersManager({ initialFilter }: { initialFilter?: string } = {}
 
                 <Separator />
 
+                {/* pricing breakdown */}
                 <div className="space-y-1 text-sm text-muted-foreground">
                   <div className="flex justify-between">
                     <span>جمع سفارش</span>
                     <span>{formatToman(detail.subtotal)}</span>
                   </div>
+                  {detail.discount > 0 && (
+                    <div className="flex justify-between text-emerald-600">
+                      <span className="flex items-center gap-1">
+                        <TicketPercent className="h-3.5 w-3.5" />
+                        تخفیف {detail.couponCode ? `(${toPersianDigits(detail.couponCode)})` : ""}
+                      </span>
+                      <span>- {formatToman(detail.discount)}</span>
+                    </div>
+                  )}
                   {detail.type === "DELIVERY" && (
                     <div className="flex justify-between">
                       <span>هزینه پیک</span>
@@ -324,17 +414,74 @@ export function OrdersManager({ initialFilter }: { initialFilter?: string } = {}
                     </div>
                   )}
                   <div className="flex justify-between">
-                    <span>مالیات ارزش افزوده</span>
+                    <span>مالیات و خدمات ({toPersianDigits(Math.round((detail.taxRate ?? 0) * 100))}٪)</span>
                     <span>{formatToman(detail.taxAmount)}</span>
                   </div>
                   <div className="flex justify-between text-base font-black text-primary">
                     <span>مبلغ کل</span>
                     <span>{formatToman(detail.total)}</span>
                   </div>
-                  {detail.paymentRef && (
-                    <div className="flex justify-between pt-1 text-xs">
-                      <span>کد رهگیری پرداخت</span>
-                      <span dir="ltr" className="font-bold">{toPersianDigits(detail.paymentRef)}</span>
+                </div>
+
+                {/* payment + baran metadata grid */}
+                <div className="grid grid-cols-2 gap-2 text-[11px]">
+                  <div className="rounded-xl border px-3 py-2.5">
+                    <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
+                      <CreditCard className="h-3 w-3" />
+                      روش پرداخت
+                    </div>
+                    <div className="mt-0.5 font-bold">
+                      {detail.paymentStatus === "PAID" ? "پرداخت آنلاین (زرین‌پال)" : detail.paymentStatus === "FAILED" ? "ناموفق" : "در انتظار / در محل"}
+                    </div>
+                  </div>
+                  <div className="rounded-xl border px-3 py-2.5">
+                    <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
+                      <CreditCard className="h-3 w-3" />
+                      کد رهگیری پرداخت
+                    </div>
+                    <div className="mt-0.5 font-bold" dir="ltr">
+                      {detail.paymentRef ? toPersianDigits(detail.paymentRef) : "—"}
+                    </div>
+                  </div>
+                  {detail.paymentCard && (
+                    <div className="rounded-xl border px-3 py-2.5">
+                      <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
+                        <CreditCard className="h-3 w-3" />
+                        کارت پرداخت‌کننده
+                      </div>
+                      <div className="mt-0.5 font-bold" dir="ltr">{toPersianDigits(detail.paymentCard)}</div>
+                    </div>
+                  )}
+                  {detail.paidAt && (
+                    <div className="rounded-xl border px-3 py-2.5">
+                      <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
+                        <Clock className="h-3 w-3" />
+                        زمان پرداخت
+                      </div>
+                      <div className="mt-0.5 font-bold">{formatJalali(detail.paidAt, true)}</div>
+                    </div>
+                  )}
+                  {detail.baranFactorNumber != null && (
+                    <div className="rounded-xl border px-3 py-2.5">
+                      <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
+                        <FileText className="h-3 w-3" />
+                        فاکتور باران
+                      </div>
+                      <div className="mt-0.5 flex items-center gap-1.5 font-bold">
+                        شماره {toPersianDigits(detail.baranFactorNumber)}
+                        <span className={`rounded-md px-1.5 py-0.5 text-[9px] ${detail.baranSentAt ? "bg-emerald-500/10 text-emerald-600" : "bg-amber-500/10 text-amber-600"}`}>
+                          {detail.baranSentAt ? `ثبت‌شده ${timeAgo(detail.baranSentAt)}` : "در صف ارسال"}
+                        </span>
+                      </div>
+                    </div>
+                  )}
+                  {detail.couponCode && (
+                    <div className="rounded-xl border px-3 py-2.5">
+                      <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
+                        <TicketPercent className="h-3 w-3" />
+                        کد تخفیف
+                      </div>
+                      <div className="mt-0.5 font-bold" dir="ltr">{detail.couponCode}</div>
                     </div>
                   )}
                 </div>
@@ -345,10 +492,10 @@ export function OrdersManager({ initialFilter }: { initialFilter?: string } = {}
                     <Clock className="h-3.5 w-3.5" />
                     تاریخچه وضعیت
                   </div>
-                  <div className="space-y-1.5">
+                  <div className="max-h-44 space-y-1.5 overflow-y-auto">
                     {(detail.statusLogs ?? []).map((log) => (
                       <div key={log.id} className="flex items-center justify-between rounded-lg bg-muted/40 px-3 py-1.5 text-[11px]">
-                        <span className="font-semibold">{log.note ?? log.status}</span>
+                        <span className="font-semibold">{log.note ?? statusLabel(log.status)}</span>
                         <span className="text-muted-foreground">{formatJalali(log.createdAt, true)}</span>
                       </div>
                     ))}

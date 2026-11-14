@@ -6,141 +6,68 @@ import { notifyAdmins, notifyCustomer } from "@/lib/notify";
 import { notifyChatPaymentSuccess, notifyChatPaymentFailed } from "@/lib/chat/payment-chat";
 import { publicUrl } from "@/lib/public-url";
 
-/**
- * ZarinPal gateway callback:
- * GET /api/payment/callback?Authority=xxx&Status=OK|NOK
- *
- * All redirects use the PUBLIC origin (X-Forwarded-Proto/Host from the
- * DirectAdmin/Apache vhost) so a visitor who paid on https://domain.com is
- * sent back to https://domain.com — never downgraded to the loopback http hop.
- */
 export async function GET(req: NextRequest) {
+  const redirect = (path: string) => Response.redirect(publicUrl(req, path), 302);
   try {
     const url = new URL(req.url);
     const authority = url.searchParams.get("Authority") ?? url.searchParams.get("authority");
     const status = (url.searchParams.get("Status") ?? url.searchParams.get("status") ?? "").toUpperCase();
-
-    if (!authority) {
-      return Response.redirect(publicUrl(req, "/?payment=failed&reason=noauth"), 302);
-    }
-
+    if (!authority) return redirect("/?payment=failed&reason=noauth");
+    const attempt = await db.paymentAttempt.findUnique({ where: { authority } });
     const order = await db.order.findFirst({
-      where: { paymentAuthority: authority },
+      where: attempt ? { id: attempt.orderId } : { paymentAuthority: authority },
       include: { user: { select: { firstName: true, lastName: true, phone: true } } },
     });
-    if (!order) {
-      return Response.redirect(publicUrl(req, "/?payment=failed&reason=notfound"), 302);
-    }
+    if (!order) return redirect("/?payment=failed&reason=notfound");
+    const success = () => redirect(`/?payment=success&order=${encodeURIComponent(order.orderNumber)}`);
+    if (order.paymentStatus === "PAID") return success();
+    const saved = await getSettings<PaymentSettings>("payment");
+    const settings = attempt ? { ...saved, merchantId: attempt.merchantId, sandbox: attempt.sandbox } : saved;
+    const verify = status === "OK"
+      ? await zarinpalVerify(settings, { amountToman: attempt?.amountToman ?? order.total, authority })
+      : { success: false, message: "پرداخت لغو شد یا ناموفق بود", refId: undefined, cardPan: undefined };
 
-    // already processed
-    if (order.paymentStatus === "PAID") {
-      return Response.redirect(publicUrl(req, `/?payment=success&order=${order.orderNumber}`), 302);
-    }
-
-    if (status !== "OK") {
-      const failed = await db.order.update({
-        where: { id: order.id },
-        data: {
-          status: "PAYMENT_FAILED",
-          paymentStatus: "FAILED",
-          paymentError: "پرداخت توسط شما لغو شد یا ناموفق بود",
-        },
-        include: { items: true, statusLogs: { orderBy: { createdAt: "asc" } } },
-      });
-      await db.orderStatusLog.create({
-        data: { orderId: order.id, status: "PAYMENT_FAILED", note: "لغو/خطای پرداخت در درگاه" },
-      });
-      await notifyChatPaymentFailed({
-        ...failed,
-        items: failed.items.map((i) => ({ name: i.name, quantity: i.quantity })),
-        statusLogs: [...failed.statusLogs, { status: "PAYMENT_FAILED", createdAt: new Date() }],
-      });
-      return Response.redirect(publicUrl(req, `/?payment=failed&order=${order.orderNumber}&reason=canceled`), 302);
-    }
-
-    // verify
-    const settings = await getSettings<PaymentSettings>("payment");
-    const verify = await zarinpalVerify(settings, { amountToman: order.total, authority });
-
-    if (verify.success) {
-      const updated = await db.order.update({
-        where: { id: order.id },
-        data: {
-          status: "PAID",
-          paymentStatus: "PAID",
+    // The paid transition, status log, popularity and coupon usage are atomic.
+    // Only the request which wins this conditional transition runs side effects.
+    const updated = await db.$transaction(async tx => {
+      const changed = await tx.order.updateMany({
+        where: verify.success
+          ? { id: order.id, paymentStatus: { not: "PAID" } }
+          : { id: order.id, paymentAuthority: authority, paymentStatus: "PENDING" },
+        data: verify.success ? {
+          status: "PAID", paymentStatus: "PAID", paymentAuthority: authority,
           paymentRef: verify.refId ? String(verify.refId) : null,
-          paymentCard: verify.cardPan ?? null,
-          paidAt: new Date(),
-          paymentError: null,
-        },
-        include: { items: true, statusLogs: { orderBy: { createdAt: "asc" } } },
+          paymentCard: verify.cardPan ?? null, paidAt: new Date(), paymentError: null,
+        } : { status: "PAYMENT_FAILED", paymentStatus: "FAILED", paymentError: verify.message ?? "تأیید پرداخت ناموفق بود" },
       });
-      await db.orderStatusLog.create({
-        data: { orderId: order.id, status: "PAID", note: `پرداخت تأیید شد — کد رهگیری ${verify.refId ?? "-"}` },
-      });
-      // increment popularity
-      const items = await db.orderItem.findMany({ where: { orderId: order.id } });
-      for (const it of items) {
-        if (it.menuItemId) {
-          await db.menuItem.update({
-            where: { id: it.menuItemId },
-            data: { orderCount: { increment: it.quantity } },
-          });
+      if (!changed.count) return null;
+      await tx.orderStatusLog.create({ data: {
+        orderId: order.id, status: verify.success ? "PAID" : "PAYMENT_FAILED",
+        note: verify.success ? `پرداخت تأیید شد — کد رهگیری ${verify.refId ?? "-"}` : verify.message ?? "خطای تأیید پرداخت",
+      } });
+      if (verify.success) {
+        const items = await tx.orderItem.findMany({ where: { orderId: order.id } });
+        for (const item of items) if (item.menuItemId) {
+          await tx.menuItem.updateMany({ where: { id: item.menuItemId }, data: { orderCount: { increment: item.quantity } } });
         }
+        if (order.couponCode) await tx.coupon.updateMany({ where: { code: order.couponCode }, data: { usedCount: { increment: 1 } } });
       }
-      // increment coupon usage
-      if (order.couponCode) {
-        await db.coupon.update({
-          where: { code: order.couponCode },
-          data: { usedCount: { increment: 1 } },
-        }).catch(() => null);
-      }
-      // real-time push to admin panel
-      await notifyAdmins("order:new-paid", {
-        orderNumber: order.orderNumber,
-        total: order.total,
-        userName: `${order.user?.firstName ?? ""} ${order.user?.lastName ?? ""}`.trim() || order.user?.phone || "-",
-        type: order.type,
-      });
-      // real-time push to the customer tracking this order
-      // (transition PENDING_PAYMENT → PAID, so they see their own payment success
-      //  live on the /track page if they have it open in another tab)
-      await notifyCustomer(order.orderNumber, "customer:order-status", {
-        orderNumber: order.orderNumber,
-        status: "PAID",
-        statusLabel: "پرداخت شد",
-        from: order.status,
-        to: "PAID",
-      });
-      // chat verdict: final confirmation + tracking code inside Nakhl AI
-      await notifyChatPaymentSuccess({
-        ...updated,
-        items: updated.items.map((i) => ({ name: i.name, quantity: i.quantity })),
-        statusLogs: [...updated.statusLogs, { status: "PAID", createdAt: new Date() }],
-      });
-      return Response.redirect(publicUrl(req, `/?payment=success&order=${order.orderNumber}&ref=${verify.refId ?? ""}`), 302);
+      return tx.order.findUniqueOrThrow({ where: { id: order.id }, include: { items: true, statusLogs: { orderBy: { createdAt: "asc" } } } });
+    });
+    if (updated) {
+      // Notification failure cannot undo or misreport an already recorded payment.
+      const payload = { ...updated, items: updated.items.map(i => ({ name: i.name, quantity: i.quantity })) };
+      await Promise.allSettled(verify.success ? [
+        notifyAdmins("order:new-paid", { orderNumber: order.orderNumber, total: order.total, userName: `${order.user.firstName ?? ""} ${order.user.lastName ?? ""}`.trim() || order.user.phone, type: order.type }),
+        notifyCustomer(order.orderNumber, "customer:order-status", { orderNumber: order.orderNumber, status: "PAID", statusLabel: "پرداخت شد", from: order.status, to: "PAID" }),
+        notifyChatPaymentSuccess(payload),
+      ] : [notifyChatPaymentFailed(payload)]);
     }
-
-    const failedVerify = await db.order.update({
-      where: { id: order.id },
-      data: {
-        status: "PAYMENT_FAILED",
-        paymentStatus: "FAILED",
-        paymentError: verify.message ?? "تأیید پرداخت ناموفق بود",
-      },
-      include: { items: true, statusLogs: { orderBy: { createdAt: "asc" } } },
-    });
-    await db.orderStatusLog.create({
-      data: { orderId: order.id, status: "PAYMENT_FAILED", note: verify.message ?? "خطای تأیید" },
-    });
-    await notifyChatPaymentFailed({
-      ...failedVerify,
-      items: failedVerify.items.map((i) => ({ name: i.name, quantity: i.quantity })),
-      statusLogs: [...failedVerify.statusLogs, { status: "PAYMENT_FAILED", createdAt: new Date() }],
-    });
-    return Response.redirect(publicUrl(req, `/?payment=failed&order=${order.orderNumber}&reason=verify`), 302);
-  } catch (e) {
-    console.error("payment callback error:", e);
-    return Response.redirect(publicUrl(req, "/?payment=failed&reason=error"), 302);
+    const current = await db.order.findUniqueOrThrow({ where: { id: order.id } });
+    if (current.paymentStatus === "PAID") return success();
+    return redirect(`/?payment=failed&order=${encodeURIComponent(order.orderNumber)}&reason=${status === "OK" ? "verify" : "canceled"}`);
+  } catch (error) {
+    console.error("payment callback error:", error);
+    return redirect("/?payment=failed&reason=error");
   }
 }

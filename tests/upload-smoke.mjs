@@ -11,9 +11,18 @@ const userToken = randomBytes(32).toString('hex');
 const fixture = `
 const {createClient} = await import('@libsql/client');
 const db = createClient({url:'file:/app/data/nakhl.db'});
-const admin = (await db.execute('SELECT id FROM AdminUser LIMIT 1')).rows[0];
+const tables=(await db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name != '_nakhl_migrations'")).rows;
+for (const {name} of tables) {
+  if(Number((await db.execute('SELECT COUNT(*) AS n FROM "'+name+'"')).rows[0].n)!==0) throw Error('Fresh boot inserted data into '+name);
+}
+// Fixtures exist only in the disposable CI container; never production startup.
+await db.executeMultiple('CREATE TABLE IF NOT EXISTS ci_fixture_marker (id TEXT PRIMARY KEY);');
+await db.execute({sql:'INSERT INTO AdminUser (id,username,passwordHash) VALUES (?,?,?)',args:['ci-admin','ci-admin','not-a-login-hash']});
+await db.execute({sql:'INSERT INTO Category (id,name,slug) VALUES (?,?,?)',args:['ci-category','CI only','ci-only']});
+await db.execute({sql:'INSERT INTO MenuItem (id,name,price,categoryId,updatedAt) VALUES (?,?,?,?,?)',args:['ci-menu','CI only',1000,'ci-category',new Date().toISOString()]});
+const admin = {id:'ci-admin'};
 const menu = (await db.execute('SELECT id FROM MenuItem LIMIT 1')).rows[0];
-if (!admin || !menu) throw Error('Production seed missing');
+if (!menu) throw Error('CI fixture missing');
 const expires = new Date(Date.now()+3600000).toISOString();
 await db.execute({sql:'INSERT INTO AdminSession (id,token,adminId,expiresAt) VALUES (?,?,?,?)',args:['ci-upload-admin',${JSON.stringify(adminToken)},admin.id,expires]});
 await db.execute({sql:'INSERT INTO User (id,phone,updatedAt) VALUES (?,?,?)',args:['ci-upload-user','09990000000',new Date().toISOString()]});
@@ -67,6 +76,13 @@ for (const body of [form('file','text/plain'),form('file','image/png',Buffer.all
   assert.equal((await res.json()).success,false);
 }
 assert.equal((await request('/f/invalid-key.png')).status,404);
+const snapshotScript = `
+const {createClient}=await import('@libsql/client');
+const {snapshotData}=await import('./scripts/data-integrity.mjs');
+const db=createClient({url:'file:/app/data/nakhl.db'});
+console.log(JSON.stringify([...await snapshotData(db)]));db.close();`;
+const snapshot=()=>execFileSync('docker',['exec','-i',container,'node','--input-type=module'],{input:snapshotScript,encoding:'utf8'}).trim();
+const beforeRestart=snapshot();
 execFileSync('docker',['restart',container],{stdio:'pipe'});
 let ready=false;
 for(let n=0;n<60;n++) {
@@ -75,6 +91,7 @@ for(let n=0;n<60;n++) {
   await new Promise(resolve=>setTimeout(resolve,1000));
 }
 assert.equal(ready,true,'App did not recover after restart');
+assert.equal(snapshot(),beforeRestart,'Restart modified existing records or inserted seed data');
 for(const url of urls) await readImage(url);
 const verify = `
 const {createClient}=await import('@libsql/client');

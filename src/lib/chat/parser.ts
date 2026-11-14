@@ -286,6 +286,14 @@ export function detectStageNavIntent(
   return null;
 }
 
+// Questions and recommendations must never mutate the basket.
+export function isMenuQuestion(message: string): boolean {
+  const n = normalizePersian(message);
+  const question = /[?؟]|قیمت|چنده|چقد|موجود|پیشنهاد|ترکیب|مواد|کالری|حساسیت|تند|چی داره/.test(n);
+  const explicitOrder = /می ?خوام|می ?خواهم|اضافه کن|بذار|بزار|سفارش بده|سفارش می ?دم/.test(n);
+  return question && !explicitOrder;
+}
+
 export function deterministicParse(
   message: string,
   stage: ChatStage,
@@ -419,6 +427,10 @@ export function deterministicParse(
         confidence: 0.7,
       };
     }
+  }
+
+  if (isMenuQuestion(message)) {
+    return { actions: [], nextStage: null, reply: "برای اضافه‌کردن غذا، نام و تعداد آن را بگویید؛ هنوز چیزی به سبد اضافه نشده است.", confidence: 0.8 };
   }
 
   // --- Add items ---

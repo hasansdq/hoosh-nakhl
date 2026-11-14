@@ -180,6 +180,11 @@ model Order {
   user            User     @relation(fields: [userId], references: [id])
   type            String // DELIVERY | PICKUP
   status          String // PENDING_PAYMENT | PAID | PREPARING | READY | DELIVERING | DELIVERED | CANCELED | PAYMENT_FAILED
+  /// اسنپ‌شات شماره موبایل مشتری هنگام ثبت سفارش (فرمت 98XXXXXXXXXX) —
+  /// حتی اگر مشتری بعداً شماره‌اش را عوض کند، متادیتای سفارش تاریخی می‌ماند
+  customerPhone   String?
+  /// اسنپ‌شات نام کامل مشتری هنگام ثبت سفارش
+  customerName    String?
   address         String?
   note            String?
   subtotal        Int
@@ -203,6 +208,7 @@ model Order {
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
+  paymentAttempts PaymentAttempt[]
   items      OrderItem[]
   statusLogs OrderStatusLog[]
   reviews    Review[]
@@ -418,4 +424,15 @@ model BaranAsset {
   updatedAt DateTime @updatedAt
 
   @@index([linkedMenuItemId])
+}
+
+model PaymentAttempt {
+  authority String @id
+  orderId String
+  order Order @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  merchantId String
+  sandbox Boolean @default(false)
+  amountToman Int
+  createdAt DateTime @default(now())
+  @@index([orderId])
 }

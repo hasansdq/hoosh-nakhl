@@ -1,39 +1,13 @@
 #!/usr/bin/env node
-/**
- * Nakhl Restaurant — first-boot seeder (Docker / VPS)
- * ---------------------------------------------------
- * Applies the idempotent SQL seeds to the local SQLite database, then
- * bootstraps the administrator account under strict data-preservation rules:
- *
- *  1. seed/seed-core.sql      — categories, menu, coupons (INSERT OR IGNORE:
- *                               existing rows — including anything the admin
- *                               has edited — are never overwritten).
- *     The embedded demo-admin INSERT is filtered out here; admin creation is
- *     env-driven so VPS operators control their own credentials.
- *  2. seed/settings-<profile>.sql — default settings rows (INSERT OR IGNORE;
- *     admin changes made in the panel always win).
- *  3. Admin bootstrap — ONLY when the AdminUser table is completely empty:
- *       • ADMIN_USERNAME (default "nakhl-admin") + ADMIN_PASSWORD from env,
- *       • or a strong random password generated on first boot and written to
- *         $NAKHL_DATA_DIR/initial-admin-credentials.txt (readable by the
- *         container user only — chmod 0600).
- *     If ANY admin already exists, this step is skipped and the existing
- *     credentials (password hash, sessions, lockout state) are preserved
- *     untouched — this is what makes redeploys lossless.
- *
- * Password hashing mirrors src/lib/auth.ts exactly (scrypt, 16-byte hex salt,
- * 64-byte key, "salt:hash" format) so the panel login accepts it.
- */
-
-import { readFile, writeFile } from "node:fs/promises";
+// Explicit admin bootstrap for a completely empty installation only.
+// No menu, settings, coupons, users or orders are seeded, in any profile.
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { randomBytes, scryptSync } from "node:crypto";
 import { createClient } from "@libsql/client";
 
 const DB_PATH = process.env.NAKHL_SQLITE_PATH;
-const SEED_DIR = process.env.NAKHL_SEED_DIR ?? "/app/seed";
 const DATA_DIR = process.env.NAKHL_DATA_DIR ?? "/app/data";
-const SEED_PROFILE = (process.env.NAKHL_SEED_PROFILE ?? "prod").toLowerCase(); // prod | dev
 
 function fatal(message) {
   console.error(`[seed] ✗ ${message}`);
@@ -49,29 +23,23 @@ function hashPassword(password) {
   return `${salt}:${hash}`;
 }
 
-/** Remove the demo-admin INSERT lines from seed-core.sql (admin is env-driven here). */
-function stripAdminInserts(sql) {
-  const needle = 'INSERT OR IGNORE INTO "ADMINUSER"';
-  return sql
-    .split("\n")
-    .filter((line) => !line.trimStart().toUpperCase().startsWith(needle))
-    .join("\n");
-}
-
 async function main() {
   const client = createClient({ url: `file:${DB_PATH}` });
 
-  // ---- 1. core seed (menu / categories / coupons) ------------------------
-  const coreSql = stripAdminInserts(await readFile(join(SEED_DIR, "seed-core.sql"), "utf8"));
-  await client.executeMultiple(coreSql);
-  console.log("[seed] ✓ core seed applied (INSERT OR IGNORE — existing rows untouched)");
-
-  // ---- 2. settings defaults ----------------------------------------------
-  const settingsFile =
-    SEED_PROFILE === "dev" ? "settings-dev.sql" : "settings-prod.sql";
-  const settingsSql = await readFile(join(SEED_DIR, settingsFile), "utf8");
-  await client.executeMultiple(settingsSql);
-  console.log(`[seed] ✓ settings defaults applied (${settingsFile} — profile "${SEED_PROFILE}")`);
+  // Explicit first-install administration only. Never load demo SQL/settings.
+  if (process.env.NAKHL_BOOTSTRAP_ADMIN !== "1") {
+    console.log("[seed] disabled; no database records changed");
+    client.close();
+    return;
+  }
+  const tables = await client.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name != '_nakhl_migrations'");
+  for (const { name } of tables.rows) {
+    const quoted = String(name).replace(/"/g, '""');
+    if (Number((await client.execute(`SELECT COUNT(*) AS n FROM "${quoted}"`)).rows[0].n) > 0) {
+      client.close();
+      throw new Error("Admin bootstrap is allowed only on an entirely empty installation; existing data preserved");
+    }
+  }
 
   // ---- 3. admin bootstrap (only when NO admin exists at all) -------------
   const adminCount = Number(

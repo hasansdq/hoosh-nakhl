@@ -5,7 +5,7 @@ const ZARINPAL_BASE = "https://payment.zarinpal.com";
 const ZARINPAL_SANDBOX = "https://sandbox.zarinpal.com";
 
 export function zarinpalBaseUrl(settings: PaymentSettings): string {
-  return settings.sandbox ? ZARINPAL_SANDBOX : ZARINPAL_BASE;
+  return settings.sandbox && process.env.ZARINPAL_FORCE_REAL !== "1" ? ZARINPAL_SANDBOX : ZARINPAL_BASE;
 }
 
 export function startPayUrl(settings: PaymentSettings, authority: string): string {

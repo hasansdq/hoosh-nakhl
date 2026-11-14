@@ -112,6 +112,9 @@ export async function chatCompletion(
         content: m.content,
       }));
       const completion = await zai.chat.completions.create({
+        model,
+        temperature: settings.temperature,
+        max_tokens: settings.maxTokens,
         messages: mapped,
         thinking: { type: "disabled" },
       });

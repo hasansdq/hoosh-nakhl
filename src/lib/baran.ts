@@ -276,7 +276,8 @@ export async function baranGuard(req: NextRequest): Promise<NextResponse | null>
       { status: 503 },
     );
   }
-  if (s.requireKey && s.apiKey) {
+  if (s.requireKey) {
+    if (!s.apiKey?.trim()) return NextResponse.json({ error: "کلید اتصال باران تنظیم نشده است" }, { status: 503 });
     const provided = extractApiKey(req);
     if (!provided || !(await safeEqual(provided, s.apiKey))) {
       return NextResponse.json({ error: "کلید API نامعتبر یا ارسال‌نشده است" }, { status: 401 });
@@ -671,33 +672,32 @@ export async function handleGetOrders(req: NextRequest): Promise<NextResponse> {
     });
 
     // ---- تخصیص پایدار شمارهٔ فاکتور و شناسهٔ مشتری (تنها بار اول) ----
-    const maxFactor = await db.order.aggregate({ _max: { baranFactorNumber: true } });
-    let nextFactor = Math.max(maxFactor._max.baranFactorNumber ?? FACTOR_NUMBER_BASE, FACTOR_NUMBER_BASE);
-    for (const o of orders) {
-      if (o.baranFactorNumber == null) {
-        nextFactor += 1;
-        try {
-          await db.order.update({ where: { id: o.id }, data: { baranFactorNumber: nextFactor } });
-          o.baranFactorNumber = nextFactor;
-        } catch {
-          o.baranFactorNumber = -1; // در فراخوانی بعدی دوباره تلاش می‌شود
+    // One transaction and one identity per user, even with multiple orders.
+    // Failed allocation aborts the response; no fabricated customer ID is sent.
+    await db.$transaction(async (tx) => {
+      const customerIds = new Map<string, number>();
+      for (const o of orders) {
+        const persisted = await tx.order.findUniqueOrThrow({ where: { id: o.id } });
+        if (persisted.baranFactorNumber == null) {
+          const max = await tx.order.aggregate({ _max: { baranFactorNumber: true } });
+          const next = Math.max(max._max.baranFactorNumber ?? FACTOR_NUMBER_BASE, FACTOR_NUMBER_BASE) + 1;
+          await tx.order.updateMany({ where: { id: o.id, baranFactorNumber: null }, data: { baranFactorNumber: next } });
         }
-      }
-    }
-    const usersNeedingId = [...new Set(orders.map((o) => o.user).filter((u) => u.baranCustomerId == null))];
-    if (usersNeedingId.length) {
-      const maxCustomer = await db.user.aggregate({ _max: { baranCustomerId: true } });
-      let nextCustomer = Math.max(maxCustomer._max.baranCustomerId ?? CUSTOMER_ID_BASE, CUSTOMER_ID_BASE);
-      for (const u of usersNeedingId) {
-        nextCustomer += 1;
-        try {
-          await db.user.update({ where: { id: u.id }, data: { baranCustomerId: nextCustomer } });
-          u.baranCustomerId = nextCustomer;
-        } catch {
-          /* تلاش مجدد در فراخوانی بعدی */
+        o.baranFactorNumber = (await tx.order.findUniqueOrThrow({ where: { id: o.id } })).baranFactorNumber;
+        if (!customerIds.has(o.user.id)) {
+          let u = await tx.user.findUniqueOrThrow({ where: { id: o.user.id } });
+          if (u.baranCustomerId == null) {
+            const max = await tx.user.aggregate({ _max: { baranCustomerId: true } });
+            const next = Math.max(max._max.baranCustomerId ?? CUSTOMER_ID_BASE, CUSTOMER_ID_BASE) + 1;
+            await tx.user.updateMany({ where: { id: u.id, baranCustomerId: null }, data: { baranCustomerId: next } });
+            u = await tx.user.findUniqueOrThrow({ where: { id: u.id } });
+          }
+          if (u.baranCustomerId == null) throw new Error("Customer ID allocation failed");
+          customerIds.set(u.id, u.baranCustomerId);
         }
+        o.user.baranCustomerId = customerIds.get(o.user.id)!;
       }
-    }
+    });
 
     const models: BaranOrderModel[] = orders
       .filter((o) => (o.baranFactorNumber ?? 0) > 0)
@@ -706,7 +706,12 @@ export async function handleGetOrders(req: NextRequest): Promise<NextResponse> {
         const noteParts = [o.note?.trim(), o.type === "PICKUP" ? "تحویل حضوری" : null].filter(
           (x): x is string => !!x,
         );
-        const fullName = `${o.user.firstName ?? ""} ${o.user.lastName ?? ""}`.trim();
+        // اسنپ‌شات سفارش مقدم است (مصداق تاریخی فاکتور)؛ پروفایل زنده فقط جایگزین
+        // ردیف‌های قدیمی قبل از مهاجرت ۰۰۰۷ می‌شود
+        const fullName =
+          o.customerName?.trim() ||
+          `${o.user.firstName ?? ""} ${o.user.lastName ?? ""}`.trim();
+        const phone = o.customerPhone?.trim() || o.user.phone;
 
         return {
           FactorNumber: o.baranFactorNumber!,
@@ -723,9 +728,9 @@ export async function handleGetOrders(req: NextRequest): Promise<NextResponse> {
           Comment: noteParts.join(" — "),
           PaymentCode: paid ? 1 : 0,
           PaymentTitle: paid ? "پرداخت آنلاین (زرین‌پال)" : "پرداخت در محل",
-          CustomerId: o.user.baranCustomerId ?? CUSTOMER_ID_BASE,
+          CustomerId: o.user.baranCustomerId!,
           CustomerName: fullName || "مشتری سایت نخل",
-          CustomerPhone: toBaranPhone(o.user.phone),
+          CustomerPhone: toBaranPhone(phone),
           CustomerAddress: o.address ?? "",
           CustomerSex: o.user.gender === "MALE" ? 1 : o.user.gender === "FEMALE" ? 2 : 0,
           CustomerCode: "",
@@ -763,7 +768,7 @@ export async function handleGetOrders(req: NextRequest): Promise<NextResponse> {
       fail: 0,
       message: `خطا در آماده‌سازی سفارش‌ها: ${e instanceof Error ? e.message : "نامشخص"}`,
     });
-    return NextResponse.json({ BaranStatus: 0, LstOrderModel: [] } satisfies BaranOrderResults);
+    return NextResponse.json({ BaranStatus: 0, LstOrderModel: [] } satisfies BaranOrderResults, { status: 503 });
   }
 }
 
@@ -825,6 +830,6 @@ export async function handleClearOrders(
       fail: 0,
       message: `خطا: ${e instanceof Error ? e.message : "نامشخص"}`,
     });
-    return NextResponse.json({});
+    return NextResponse.json({ error: "ثبت تأیید دریافت سفارش ناموفق بود؛ دوباره تلاش کنید" }, { status: 503 });
   }
 }

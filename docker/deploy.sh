@@ -7,7 +7,7 @@
 # کارها:
 #  ۱. بررسی پیش‌نیازها (docker, docker compose, فایل .env)
 #  ۲. ساخت ایمیج (multi-stage) و راه‌اندازی کانتینر
-#  ۳. انتظار برای healthy شدن (مهاجرت + سید اولین بوت انجام می‌شود)
+#  ۳. انتظار برای healthy شدن (فقط مهاجرت ساختار؛ بدون داده اولیه)
 #  ۴. نمایش راهنمای ورود مدیر و گام بعدی (پراکسی آپاچی دایرکت‌ادمین)
 # =============================================================================
 set -euo pipefail
@@ -116,7 +116,7 @@ nakhl_timed "راه‌اندازی کانتینر" docker compose up -d
 # ---------- 3. انتظار برای سلامت ----------
 PORT="$(grep -E '^NAKHL_PORT=' .env | cut -d= -f2 || true)"
 PORT="${PORT:-8080}"
-bold "انتظار برای healthy شدن (مهاجرت دیتابیس + سید اولین بوت)…"
+bold "انتظار برای healthy شدن (مهاجرت ساختار؛ بدون seed)…"
 for i in $(seq 1 120); do
   STATE="$(docker inspect --format '{{.State.Health.Status}}' nakhl-app 2>/dev/null || echo starting)"
   if [ "$STATE" = "healthy" ]; then

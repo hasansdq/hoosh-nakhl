@@ -89,13 +89,63 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string
       include: {
         items: true,
         statusLogs: { orderBy: { createdAt: "asc" } },
-        user: { select: { firstName: true, lastName: true, phone: true } },
+        user: { select: { id: true, firstName: true, lastName: true, phone: true, email: true, status: true } },
       },
     });
     if (!order) return fail("سفارش یافت نشد", 404);
 
-    return ok({ order });
-  } catch {
+    // customer snapshot first, live profile as fallback (legacy rows)
+    const snapshotName = order.customerName;
+    const liveName = order.user ? `${order.user.firstName ?? ""} ${order.user.lastName ?? ""}`.trim() : "";
+
+    return ok({
+      order: {
+        id: order.id,
+        orderNumber: order.orderNumber,
+        status: order.status,
+        statusLabel: ORDER_STATUS_LABELS[order.status] ?? order.status,
+        paymentStatus: order.paymentStatus,
+        paymentRef: order.paymentRef,
+        paymentAuthority: order.paymentAuthority,
+        paymentCard: order.paymentCard,
+        paymentError: order.paymentError,
+        paidAt: order.paidAt?.toISOString() ?? null,
+        type: order.type,
+        address: order.address,
+        note: order.note,
+        subtotal: order.subtotal,
+        deliveryFee: order.deliveryFee,
+        taxRate: order.taxRate,
+        taxAmount: order.taxAmount,
+        discount: order.discount,
+        couponCode: order.couponCode,
+        total: order.total,
+        createdAt: order.createdAt.toISOString(),
+        baranFactorNumber: order.baranFactorNumber,
+        baranSentAt: order.baranSentAt?.toISOString() ?? null,
+        customer: snapshotName || liveName || order.customerPhone || order.user?.phone || "-",
+        customerPhone: order.customerPhone ?? order.user?.phone ?? "-",
+        customerEmail: order.user?.email ?? null,
+        customerUserId: order.user?.id ?? null,
+        customerStatus: order.user?.status ?? null,
+        items: order.items.map((i) => ({
+          id: i.id,
+          name: i.name,
+          unitPrice: i.unitPrice,
+          quantity: i.quantity,
+          lineTotal: i.lineTotal,
+          menuItemId: i.menuItemId,
+        })),
+        statusLogs: order.statusLogs.map((l) => ({
+          id: l.id,
+          status: l.status,
+          note: l.note,
+          createdAt: l.createdAt.toISOString(),
+        })),
+      },
+    });
+  } catch (e) {
+    console.error("admin order detail error:", e);
     return fail("خطای داخلی سرور", 500);
   }
 }

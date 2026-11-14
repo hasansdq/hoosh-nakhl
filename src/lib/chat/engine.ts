@@ -3,7 +3,7 @@ import { db } from "@/lib/db";
 import { getSettings, type AISettings, type GeneralSettings } from "@/lib/settings";
 import { chatCompletion, extractJson } from "@/lib/ai";
 import { buildSystemPrompt, type ChatStage, type MenuCategoryData, type OrderDraft, type OrderHistoryEntry, type TopFavoriteEntry } from "./prompts";
-import { deterministicParse, matchMenuItems, includesWord, detectStageNavIntent, wantsTracking, type ParsedAction } from "./parser";
+import { isMenuQuestion, deterministicParse, matchMenuItems, includesWord, detectStageNavIntent, wantsTracking, type ParsedAction } from "./parser";
 import { normalizePersian, formatToman } from "@/lib/fa";
 import { extractAllergenPhrases, matchAllergens } from "@/lib/chat/allergens";
 import { checkCoupon } from "@/lib/coupons";
@@ -232,7 +232,9 @@ function applyActions(
         if (allergenHits.length > 0) {
           warnings.push(`توجه! «${menu.name}» حاوی ${allergenHits.join(" و ")} است که در حساسیت‌های شما ثبت شده — لطفاً با احتیاط انتخاب کنید`);
         }
-        const qty = Math.max(1, Math.min(30, action.quantity ?? 1));
+        const rawQty = action.quantity ?? 1;
+        if (!Number.isInteger(rawQty) || rawQty < 1) break;
+        const qty = Math.min(30, rawQty);
         const existing = items.find((i) => i.itemId === menu.id);
         const currentCount = items.reduce((s, i) => s + i.quantity, 0);
         if (currentCount + qty > maxItems) {
@@ -253,6 +255,7 @@ function applyActions(
         const existing = items.find((i) => i.itemId === menu.id);
         if (!existing) break;
         const qty = action.quantity ?? 0;
+        if (!Number.isInteger(qty) || qty < 0) break;
         if (qty === 0 || qty >= existing.quantity) {
           items = items.filter((i) => i.itemId !== menu.id);
           log.push(`حذف ${menu.name}`);
@@ -638,7 +641,7 @@ export async function processChatMessage(
   const completion = await chatCompletion(aiSettings, [
     { role: "system", content: systemPrompt },
     ...historyMessages,
-    { role: "user", content: userMessage },
+    ...(historyMessages.at(-1)?.role === "user" && historyMessages.at(-1)?.content === userMessage ? [] : [{ role: "user" as const, content: userMessage }]),
   ], { jsonMode: true });
 
   if (completion.success) {
@@ -647,7 +650,7 @@ export async function processChatMessage(
       stage?: string;
       actions?: ParsedAction[];
     }>(completion.content);
-    if (parsed?.reply) {
+    if (typeof parsed?.reply === "string" && parsed.reply.trim()) {
       replyText = parsed.reply;
       const VALID_STAGES = ["GREETING", "ORDERING", "DRINKS", "DELIVERY_METHOD", "ADDRESS", "CONFIRMATION", "TRACKING"];
       suggestedStage = VALID_STAGES.includes(parsed.stage ?? "") ? (parsed.stage as ChatStage) : null;
@@ -687,7 +690,6 @@ export async function processChatMessage(
   // ---------- 2.5) Anti-hallucination filter + safety net for ADD_ITEM ----------
   const allMenuItems = categories.flatMap((c) => c.items);
   const normUserMsg = normalizePersian(userMessage);
-  const normReply = normalizePersian(replyText);
   // category hints, e.g. «خورشت‌های ایرانی» → «خورشت» — mentioning the category
   // plus the item's head word («خورشت قیمه» for «قیمه سیب») is explicit intent
   const categoryHints = categories
@@ -697,10 +699,9 @@ export async function processChatMessage(
     const n = normalizePersian(itemName);
     // strict word-boundary check on the user's own message
     if (includesWord(normUserMsg, n)) return true;
-    if (normReply.includes(n)) return true;
     const tokens = n.split(" ").filter((t) => t.length > 2);
     // token-level fallback (e.g. "کوبیده" for "کباب کوبیده")
-    if (tokens.length > 0 && tokens.every((t) => includesWord(normUserMsg, t) || normReply.includes(t))) return true;
+    if (tokens.length > 0 && tokens.every((t) => includesWord(normUserMsg, t))) return true;
     // head word + a matching category hint («خورشت قیمه» → «قیمه سیب»)
     const head = tokens[0] ?? "";
     if (head.length >= 3 && includesWord(normUserMsg, head) && categoryHints.some((h) => includesWord(normUserMsg, h))) {
@@ -713,7 +714,7 @@ export async function processChatMessage(
     if (a.type !== "ADD_ITEM") return true;
     const item = resolveActionItem(a, allMenuItems);
     if (!item) return false; // unresolvable → drop (safety net may re-add correct one)
-    return isMentioned(item.name);
+    return !isMenuQuestion(userMessage) && isMentioned(item.name);
   });
 
   // Safety net: items the user clearly ordered/removed but AI missed → merge

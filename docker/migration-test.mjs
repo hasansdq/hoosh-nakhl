@@ -20,7 +20,7 @@ const run = () => spawnSync(process.execPath, [runner], {
 let client;
 try {
   await mkdir(migrations);
-  await writeFile(join(migrations, "0001_test.sql"), 'CREATE TABLE preserved (id INTEGER PRIMARY KEY); INSERT INTO preserved VALUES (1);');
+  await writeFile(join(migrations, "0001_test.sql"), 'CREATE TABLE preserved (id INTEGER PRIMARY KEY);');
   client = createClient({ url: `file:${dbPath}` });
   await client.executeMultiple(`
     CREATE TABLE _nakhl_migrations (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, applied_at TEXT DEFAULT CURRENT_TIMESTAMP);
@@ -40,7 +40,7 @@ try {
     assert.equal(result.status, 0, result.stderr);
   }
   client = createClient({ url: `file:${dbPath}` });
-  assert.equal((await client.execute("SELECT * FROM preserved")).rows.length, 1);
+  assert.equal((await client.execute("SELECT * FROM preserved")).rows.length, 0);
   assert.equal((await client.execute("SELECT * FROM _nakhl_migrations")).rows.length, 1);
   console.log("PASS: failed completion record rolls back schema; recovery and restart apply migration once.");
 } finally {

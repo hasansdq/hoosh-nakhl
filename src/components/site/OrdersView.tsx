@@ -730,6 +730,9 @@ export function OrdersView() {
       {/* reorder confirmation modal — shows current prices + availability + price diff */}
       <Dialog open={!!reorderTarget} onOpenChange={(open) => !open && setReorderTarget(null)}>
         <DialogContent className="max-w-lg rounded-2xl" aria-describedby={undefined}>
+          {/* fallback sr-only title — keeps Radix a11y happy during the close
+              animation when reorderTarget is already null */}
+          {!reorderTarget && <DialogTitle className="sr-only">سفارش مجدد</DialogTitle>}
           {reorderTarget && (
             <>
               <DialogHeader>

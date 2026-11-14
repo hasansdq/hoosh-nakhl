@@ -4,20 +4,10 @@
 # -----------------------------------------------------------------------------
 # اجرا از ریشهٔ پروژه:   bash docker/update.sh
 #
-# ترتیب کارها (هر سه قانون طلایی رعایت می‌شود):
-#  ۱. بک‌اپ لحظه‌ای از دیتابیس قبل از هر کاری (VACUUM INTO — سازگار آنلاین)
-#  ۲. ساخت ایمیج جدید (volume باقی می‌ماند — down -v هرگز)
-#  ۳. تست ارتقا با ایمیج جدید روی دیتابیس آزمایشیِ دارای سفارش (گیت سخت:
-#     اگر حتی یک ردیف سفارش/قلم/لاگ در شبیه‌سازی از دست برود، جایگزینی لغو
-#     می‌شود) + خروجی JSON داده‌هایی که این ارتقا حذف می‌کند + تأیید مدیر
-#  ۴. جایگزینی کانتینر؛ مهاجرت‌ها فقط در جهت جلو اعمال می‌شوند؛ داده/
-#     تنظیمات/مدیر موجود حفظ می‌شوند؛ رزروها و زمان تحویل طبق migration 0006 حذف می‌شوند.
-#
-# نکتهٔ شبکه: Dockerfile عمداً بدون directive «# syntax=…» نوشته شده و بیلد
-# برای خودش به docker.io وصل نمی‌شود (ایمیج‌های پایه از کش محلی مصرف می‌شوند).
-# اگر شبکه/رجیستری داکر مشکل داشته باشد، همین اسکریپت علت را تشخیص داده و
-# راه‌حل فارسی چاپ می‌کند — کانتینر فعلی و داده‌ها دست‌نخورده می‌مانند.
-# =============================================================================
+# Backup, build, isolated regression tests, then replace the container.
+# Startup migrations compare all existing rows/columns before committing.
+# There is no seeding, data deletion or destructive opt-in.
+# Test containers NEVER mount the production data volume.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -114,10 +104,10 @@ fi
 
 
 # ۳) پیش از جایگزینی: تست ارتقا با ایمیج جدید + خروجی داده‌های حذف‌شونده + تأیید مدیر
-bold "گام ۳/۴ — تست ارتقا و محافظت از داده‌های حذف‌شونده…"
+bold "گام ۳/۴ — تست ارتقا و حفظ تمام داده‌ها…"
 
 # ۳-الف) شبیه‌سازی کامل ارتقا روی دیتابیس آزمایشیِ دارای سفارش (ایمیج جدید؛ دیتای واقعی دست‌نخورده)
-if ! nakhl_timed "تست حفظ سفارش‌ها" docker compose run --rm -T --no-deps --entrypoint node app scripts/upgrade-test.mjs; then
+if ! nakhl_timed "تست حفظ سفارش‌ها" docker run --rm --network none --tmpfs /app/data:uid=1000,gid=1000 --entrypoint node nakhl-restaurant:latest scripts/upgrade-test.mjs; then
   bold "✗ تست ارتقا شکست خورد (DATA LOSS یا خطای اجرا) — جایگزینی کانتینر لغو شد:"
   echo  "    • کانتینر فعلی همچنان در حال سرویس‌دهی است (نسخهٔ قبلی)"
   echo  "    • بک‌آپ گام ۱ موجود است؛ لاگ بالا را بررسی و مشکل را رفع کنید"
@@ -125,43 +115,19 @@ if ! nakhl_timed "تست حفظ سفارش‌ها" docker compose run --rm -T --
 fi
 ok "تست ارتقا پاس شد: سفارش‌ها/اقلام/لاگ‌ها در شبیه‌سازی سالم ماندند"
 
-if ! nakhl_timed "تست اتمی‌بودن مهاجرت" docker compose run --rm -T --no-deps --entrypoint node app scripts/migration-test.mjs; then
+if ! nakhl_timed "تست اتمی‌بودن مهاجرت" docker run --rm --network none --tmpfs /app/data:uid=1000,gid=1000 --entrypoint node nakhl-restaurant:latest scripts/migration-test.mjs; then
   bold "✗ تست مهاجرت شکست خورد — کانتینر فعلی جایگزین نشد"
   exit 1
 fi
 
-# ۳-ب) خروجی JSON خوانا از داده‌هایی که این ارتقا برای همیشه حذف می‌کند (روی volume واقعی)
-if EXPORT_LOG="$(docker compose run --rm -T --no-deps --entrypoint node app scripts/export-dropped.mjs 2>/dev/null)"; then
-  echo "${EXPORT_LOG}"
-  ok "خروجی JSON داده‌های حذف‌شونده ذخیره شد (data/pre-upgrade-dropped-*.json روی volume)"
-else
-  warn "خروجی JSON گرفته نشد (دیتابیس تازه است یا ساختار حذف‌شونده ندارد) — بک‌آپ کامل گام ۱ پوشش می‌دهد"
-fi
-
-# ۳-ج) اعلام واضح حذف داده + تأیید صریح مدیر
-bold "⚠️  هشدار حذف داده — این ارتقا چه چیزی را برای همیشه پاک می‌کند"
-echo  "این نسخه ماژول «رزرو میز» و «تحویل زمان‌بندی‌شده» را کامل حذف می‌کند (دستور مالک)."
-echo  "با اعمال مایگریشن 0006 این داده‌ها برای همیشه از دیتابیس حذف می‌شوند:"
-echo  "  • تمام رکوردهای رزرو میز (جدول Reservation)"
-echo  "  • زمان تحویل زمان‌بندی‌شدهٔ سفارش‌ها (ستون Order.scheduledFor)"
-echo  "سفارش‌ها، اقلام سفارش، لاگ‌های وضعیت، نظرات و بقیهٔ داده‌ها دست‌نخورده می‌مانند"
-echo  "(خروجی JSON مرحلهٔ ۳-ب + بک‌آپ کامل گام ۱ برای بازیابی در دسترس‌اند)."
-echo
-if [ "${NAKHL_ALLOW_DESTRUCTIVE_UPGRADE:-}" = "yes" ]; then
-  ok "حذف داده با NAKHL_ALLOW_DESTRUCTIVE_UPGRADE=yes صریحاً تأیید شده است"
-elif [ -t 0 ]; then
-  printf 'برای ادامه و حذف قطعی داده‌های بالا «yes» بنویسید: '
-  read -r ANSWER
-  if [ "${ANSWER}" != "yes" ]; then
-    echo "✗ لغو شد — کانتینر فعلی به سرویس‌دهی ادامه می‌دهد و هیچ چیزی تغییر نکرد."
-    exit 0
-  fi
-else
-  warn "اجرای غیرتعاملی بدون تأیید صریح حذف داده متوقف شد؛ کانتینر فعلی جایگزین نشد"
-  echo "برای تأیید آگاهانه: NAKHL_ALLOW_DESTRUCTIVE_UPGRADE=yes bash docker/update.sh"
+if ! nakhl_timed "تست عدم ورود داده نمونه" docker run --rm --network none --tmpfs /app/data:uid=1000,gid=1000 --entrypoint node nakhl-restaurant:latest scripts/data-preservation-test.mjs; then
+  bold "✗ تست حفظ داده شکست خورد — کانتینر فعلی جایگزین نشد"
   exit 1
 fi
-echo
+
+# No destructive migration opt-in: every migration must preserve existing data.
+ok "مهاجرت‌ها بدون حذف یا افزودن دادهٔ تجاری اجرا می‌شوند؛ seed غیرفعال است"
+
 # ۳) جایگزینی کانتینر (volume دست‌نخورده)
 bold "گام ۴/۴ — جایگزینی کانتینر…"
 nakhl_timed "راه‌اندازی کانتینر" docker compose up -d
@@ -178,5 +144,5 @@ done
 # پاک‌سازی ایمیج‌های قدیمی بی‌استفاده (volume ها را هرگز لمس نمی‌کند)
 docker image prune -f >/dev/null 2>&1 && ok "ایمیج‌های بلااستفاده پاک شدند" || true
 
-bold "═══ به‌روزرسانی کامل شد — سفارش‌ها حفظ شدند؛ حذف‌های اعلام‌شده اعمال شدند ═══"
+bold "═══ به‌روزرسانی کامل شد — داده‌های موجود حفظ شدند؛ دادهٔ نمونه اضافه نشد ═══"
 docker compose ps

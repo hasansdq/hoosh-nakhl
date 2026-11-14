@@ -104,6 +104,7 @@ function AiSettingsTab() {
       {
         body: {
           provider: settings.provider,
+          model: settings.model,
           apiKey: settings.apiKey,
           baseUrl: settings.baseUrl,
         },

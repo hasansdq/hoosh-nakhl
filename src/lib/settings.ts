@@ -117,7 +117,7 @@ export const DEFAULT_AI_SETTINGS: AISettings = {
 
 export const DEFAULT_SMS_SETTINGS: SMSSettings = {
   provider: "none",
-  devMode: true,
+  devMode: false,
   otpTemplate: "رستوران نخل\nکد تأیید شما: {code}\nاین کد تا {ttl} دقیقه معتبر است.",
   otpTtlMinutes: 3,
   otpLength: 5,
@@ -135,8 +135,8 @@ export const DEFAULT_SMS_SETTINGS: SMSSettings = {
 
 export const DEFAULT_PAYMENT_SETTINGS: PaymentSettings = {
   merchantId: "",
-  sandbox: true,
-  simulationMode: true,
+  sandbox: false,
+  simulationMode: false,
   currency: "IRR",
   description: "پرداخت سفارش رستوران نخل",
   callbackUrl: "",

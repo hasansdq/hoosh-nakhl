@@ -36,6 +36,7 @@ printf '%s\\n' "$*" >> "$MOCK_LOG"
 case "$*" in
   'compose --progress plain build') exit "${BUILD_RESULT:-0}" ;;
   *upgrade-test.mjs) exit "${UPGRADE_RESULT:-0}" ;;
+  *data-preservation-test.mjs) exit "${PRESERVATION_RESULT:-0}" ;;
   *migration-test.mjs) exit "${MIGRATION_RESULT:-0}" ;;
   'inspect '*) echo healthy ;;
 esac
@@ -45,8 +46,9 @@ exit 0
     for name, settings, expected, replace in [
         ('build failure', {'BUILD_RESULT': '9'}, 1, False),
         ('upgrade failure', {'UPGRADE_RESULT': '8'}, 1, False),
+        ('data preservation failure', {'PRESERVATION_RESULT':'6'}, 1, False),
         ('migration failure', {'MIGRATION_RESULT': '7'}, 1, False),
-        ('missing approval', {}, 1, False),
+        ('preserving upgrade without deletion approval', {}, 0, True),
         ('explicit approval', {'NAKHL_ALLOW_DESTRUCTIVE_UPGRADE': 'yes'}, 0, True),
     ]:
         log = root / 'calls.log'

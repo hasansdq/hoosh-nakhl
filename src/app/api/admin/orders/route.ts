@@ -1,8 +1,8 @@
 import { NextRequest } from "next/server";
 import { db } from "@/lib/db";
-import { ok, fail, requireAdmin, logAudit } from "@/lib/api";
+import { ok, fail, requireAdmin } from "@/lib/api";
+import { toEnglishDigits } from "@/lib/fa";
 import { ORDER_STATUS_LABELS } from "@/lib/chat/engine";
-import { getClientIp } from "@/lib/auth";
 
 const VALID_STATUSES = ["PENDING_PAYMENT", "PAID", "PREPARING", "READY", "DELIVERING", "DELIVERED", "CANCELED", "PAYMENT_FAILED"];
 
@@ -17,13 +17,21 @@ export async function GET(req: NextRequest) {
     const page = Math.max(1, Number(url.searchParams.get("page") ?? 1));
     const pageSize = 15;
 
+    // search also matches the customer phone snapshot (exact digits) so an
+    // admin can find an order by the phone number printed on the invoice
+    const digits = toEnglishDigits(search ?? "").replace(/\D/g, "").replace(/^(?:0098|98|0)(?=9)/, "");
     const where = {
       ...(status && VALID_STATUSES.includes(status) ? { status } : {}),
       ...(search
         ? {
             OR: [
               { orderNumber: { contains: search } },
-              { user: { phone: { contains: search.replace(/\D/g, "") || "___" } } },
+              ...(digits ? [
+                { customerPhone: { contains: digits } },
+                { customerPhone: { contains: `98${digits}` } },
+                { user: { phone: { contains: digits } } },
+                { user: { phone: { contains: `98${digits}` } } },
+              ] : []),
               { user: { firstName: { contains: search } } },
               { user: { lastName: { contains: search } } },
             ],
@@ -61,12 +69,15 @@ export async function GET(req: NextRequest) {
         subtotal: o.subtotal,
         deliveryFee: o.deliveryFee,
         taxAmount: o.taxAmount,
+        discount: o.discount,
+        couponCode: o.couponCode,
         total: o.total,
         createdAt: o.createdAt.toISOString(),
-        customer: o.user
-          ? `${o.user.firstName ?? ""} ${o.user.lastName ?? ""}`.trim() || o.user.phone
-          : "-",
-        customerPhone: o.user?.phone ?? "-",
+        paidAt: o.paidAt?.toISOString() ?? null,
+        customer: o.customerName || (o.user ? `${o.user.firstName ?? ""} ${o.user.lastName ?? ""}`.trim() : "") || o.customerPhone || o.user?.phone || "-",
+        customerPhone: o.customerPhone ?? o.user?.phone ?? "-",
+        baranFactorNumber: o.baranFactorNumber,
+        baranSentAt: o.baranSentAt?.toISOString() ?? null,
         items: o.items.map((i) => ({ id: i.id, name: i.name, quantity: i.quantity, lineTotal: i.lineTotal })),
       })),
       pagination: { page, pageSize, total, pages: Math.ceil(total / pageSize) },

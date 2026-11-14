@@ -2,7 +2,7 @@ name: Docker validation
 
 on:
   push:
-    branches: [main]
+    branches: [main, "fix/data-preserving-v13"]
   pull_request:
   workflow_dispatch:
 
@@ -15,6 +15,11 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Verify business regressions without external services
+        run: node tests/business-regressions.mjs
       - name: Verify timer and safe update failure handling
         run: python3 tests/update-progress.py
       - name: Build production image
@@ -35,6 +40,8 @@ jobs:
         run: docker run --rm --entrypoint node nakhl-validation scripts/upgrade-test.mjs
       - name: Verify atomic migration completion and restart
         run: docker run --rm --entrypoint node nakhl-validation scripts/migration-test.mjs
+      - name: Verify zero data mutations and no automatic seed
+        run: docker run --rm --network none --entrypoint node nakhl-validation scripts/data-preservation-test.mjs
       - name: Start production app with temporary data
         run: |
           docker volume create nakhl-validation-data

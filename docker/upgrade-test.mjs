@@ -47,18 +47,18 @@ const KEEP = process.argv.includes("--keep");
 // ============================================================================
 const STRUCTURAL_CHANGES = {
   // tables the upgrade intentionally DROPS (data is lost by design):
-  droppedTables: ["Reservation"],
+  droppedTables: [],
   // columns the upgrade intentionally drops, per table:
-  droppedColumns: { Order: ["scheduledFor"] },
+  droppedColumns: {},
   // columns the upgrade ADDS, per table (checked for existence only):
-  addedColumns: { Category: ["dinnerOnly"] },
+  addedColumns: { Category: ["dinnerOnly"], Order: ["customerPhone", "customerName"] },
 };
 
 // tables whose data must survive the upgrade bit-for-bit:
 const PRESERVED_TABLES = [
   "AdminUser", "User", "Address", "Session", "Category", "MenuItem",
   "Coupon", "Order", "OrderItem", "OrderStatusLog",
-  "ChatSession", "ChatMessage", "Review", "AuditLog",
+  "ChatSession", "ChatMessage", "Review", "AuditLog", "Reservation",
 ];
 
 function fatal(msg) {
@@ -116,8 +116,8 @@ async function main() {
   const MIGRATION_FILE_RE = /^\d{4}_.*\.sql$/i;
   const all = (await readdir(MIGRATIONS_DIR)).filter((f) => MIGRATION_FILE_RE.test(f)).sort();
   if (all.length < 2) fatal("need at least 2 migrations to simulate an upgrade");
-  const baseFiles = all.slice(0, -1);
-  const upgradeFiles = all.slice(-1);
+  const baseFiles = all.slice(0, 5);
+  const upgradeFiles = all.slice(5);
   console.log(`[upgrade-test] نسخهٔ فعلی استقرار (base): ${baseFiles[baseFiles.length - 1]}`);
   console.log(`[upgrade-test] مایگریشن تحت تست ارتقا:     ${upgradeFiles.join(", ")}\n`);
 
@@ -203,7 +203,7 @@ async function main() {
           ('rz1','RSV-001','u1','زهرا کریمی','09131112223',4,'2025-01-06T20:00:00.000Z','۲۰:۰۰','CONFIRMED',5,'${now}'),
           ('rz2','RSV-002','u2','علی محمدی','09133334445',2,'2025-01-07T21:00:00.000Z','۲۱:۰۰','PENDING',NULL,'${now}');
       `);
-      console.log("[upgrade-test] ✓ ۲ رزرو میز + ۱ زمان تحویل زمان‌بندی‌شده seed شد (این‌ها طبق دستور مالک حذف می‌شوند)");
+      console.log("[upgrade-test] ✓ ۲ رزرو میز + ۱ زمان تحویل زمان‌بندی‌شده seed شد (همه باید حفظ شوند)");
     }
     console.log(`[upgrade-test] ✓ دیتای واقع‌گرایانه seed شد: ۲ کاربر، ۳ سفارش، ${hasReservations ? "۲ رزرو، " : ""}۴ قلم سفارش، ۷ لاگ وضعیت، ۱ نظر\n`);
 
