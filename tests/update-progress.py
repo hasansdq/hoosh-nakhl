@@ -35,6 +35,7 @@ with tempfile.TemporaryDirectory() as directory:
 printf '%s\\n' "$*" >> "$MOCK_LOG"
 case "$*" in
   'compose --progress plain build') exit "${BUILD_RESULT:-0}" ;;
+  *'upgrade-test.mjs --legacy-6') exit "${LEGACY_RESULT:-0}" ;;
   *upgrade-test.mjs) exit "${UPGRADE_RESULT:-0}" ;;
   *data-preservation-test.mjs) exit "${PRESERVATION_RESULT:-0}" ;;
   *migration-test.mjs) exit "${MIGRATION_RESULT:-0}" ;;
@@ -45,6 +46,7 @@ exit 0
     cli.chmod(0o755)
     for name, settings, expected, replace in [
         ('build failure', {'BUILD_RESULT': '9'}, 1, False),
+        ('legacy upgrade failure', {'LEGACY_RESULT':'8'}, 1, False),
         ('upgrade failure', {'UPGRADE_RESULT': '8'}, 1, False),
         ('data preservation failure', {'PRESERVATION_RESULT':'6'}, 1, False),
         ('migration failure', {'MIGRATION_RESULT': '7'}, 1, False),

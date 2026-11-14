@@ -27,6 +27,7 @@ const expires = new Date(Date.now()+3600000).toISOString();
 await db.execute({sql:'INSERT INTO AdminSession (id,token,adminId,expiresAt) VALUES (?,?,?,?)',args:['ci-upload-admin',${JSON.stringify(adminToken)},admin.id,expires]});
 await db.execute({sql:'INSERT INTO User (id,phone,updatedAt) VALUES (?,?,?)',args:['ci-upload-user','09990000000',new Date().toISOString()]});
 await db.execute({sql:'INSERT INTO Session (id,token,userId,expiresAt) VALUES (?,?,?,?)',args:['ci-upload-session',${JSON.stringify(userToken)},'ci-upload-user',expires]});
+await db.execute({sql:'INSERT INTO "Order" (id,orderNumber,userId,type,status,subtotal,total,updatedAt) VALUES (?,?,?,?,?,?,?,?)',args:['ci-order','CI-HISTORICAL','ci-upload-user','PICKUP','PENDING_PAYMENT',1000,1000,new Date().toISOString()]});
 console.log(JSON.stringify({menuId:menu.id}));
 db.close();`;
 const {menuId} = JSON.parse(execFileSync('docker',['exec','-i',container,'node','--input-type=module'],{input:fixture,encoding:'utf8'}));
@@ -82,6 +83,14 @@ const {snapshotData}=await import('./scripts/data-integrity.mjs');
 const db=createClient({url:'file:/app/data/nakhl.db'});
 console.log(JSON.stringify([...await snapshotData(db)]));db.close();`;
 const snapshot=()=>execFileSync('docker',['exec','-i',container,'node','--input-type=module'],{input:snapshotScript,encoding:'utf8'}).trim();
+const beforeAdminReads=snapshot();
+for (const path of ['/api/admin/orders','/api/admin/orders/ci-order','/api/admin/users/ci-upload-user']) {
+  const response=await request(path,{headers:{cookie:adminCookie}});
+  const payload=await response.json();
+  assert.equal(response.status,200,JSON.stringify(payload));
+  assert.equal(payload.success,true,JSON.stringify(payload));
+}
+assert.equal(snapshot(),beforeAdminReads,'Admin GET mutated historical order/customer data');
 const beforeRestart=snapshot();
 execFileSync('docker',['restart',container],{stdio:'pipe'});
 let ready=false;
