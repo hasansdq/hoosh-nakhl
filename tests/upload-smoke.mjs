@@ -17,7 +17,7 @@ for (const {name} of tables) {
 }
 // Fixtures exist only in the disposable CI container; never production startup.
 await db.executeMultiple('CREATE TABLE IF NOT EXISTS ci_fixture_marker (id TEXT PRIMARY KEY);');
-await db.execute({sql:'INSERT INTO AdminUser (id,username,passwordHash) VALUES (?,?,?)',args:['ci-admin','ci-admin','not-a-login-hash']});
+await db.execute({sql:'INSERT INTO AdminUser (id,username,passwordHash,displayName) VALUES (?,?,?,?)',args:['ci-admin','ci-admin','not-a-login-hash','CI only']});
 await db.execute({sql:'INSERT INTO Category (id,name,slug) VALUES (?,?,?)',args:['ci-category','CI only','ci-only']});
 await db.execute({sql:'INSERT INTO MenuItem (id,name,price,categoryId,updatedAt) VALUES (?,?,?,?,?)',args:['ci-menu','CI only',1000,'ci-category',new Date().toISOString()]});
 const admin = {id:'ci-admin'};

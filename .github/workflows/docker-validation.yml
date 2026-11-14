@@ -37,7 +37,9 @@ jobs:
           grep -q 'Type error:' /tmp/nakhl-cache-negative.log
           rm src/nakhl-cache-type-test.ts
       - name: Verify database upgrade in production image
-        run: docker run --rm --entrypoint node nakhl-validation scripts/upgrade-test.mjs
+        run: |
+          docker run --rm --network none --entrypoint node nakhl-validation scripts/upgrade-test.mjs
+          docker run --rm --network none --entrypoint node nakhl-validation scripts/upgrade-test.mjs --legacy-6
       - name: Verify atomic migration completion and restart
         run: docker run --rm --entrypoint node nakhl-validation scripts/migration-test.mjs
       - name: Verify zero data mutations and no automatic seed

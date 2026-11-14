@@ -40,6 +40,7 @@ const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const MIGRATIONS_DIR = process.env.NAKHL_MIGRATIONS_DIR ?? join(SCRIPT_DIR, "..", "migrations");
 const MIGRATE_SCRIPT = join(SCRIPT_DIR, "migrate.mjs");
 const KEEP = process.argv.includes("--keep");
+const LEGACY6 = process.argv.includes("--legacy-6");
 
 // ============================================================================
 // Per-upgrade expectations — THE ONLY section to touch when a new destructive
@@ -116,8 +117,8 @@ async function main() {
   const MIGRATION_FILE_RE = /^\d{4}_.*\.sql$/i;
   const all = (await readdir(MIGRATIONS_DIR)).filter((f) => MIGRATION_FILE_RE.test(f)).sort();
   if (all.length < 2) fatal("need at least 2 migrations to simulate an upgrade");
-  const baseFiles = all.slice(0, 5);
-  const upgradeFiles = all.slice(5);
+  const baseFiles = all.slice(0, LEGACY6 ? 6 : 5);
+  const upgradeFiles = all.slice(LEGACY6 ? 6 : 5);
   console.log(`[upgrade-test] نسخهٔ فعلی استقرار (base): ${baseFiles[baseFiles.length - 1]}`);
   console.log(`[upgrade-test] مایگریشن تحت تست ارتقا:     ${upgradeFiles.join(", ")}\n`);
 
@@ -132,6 +133,13 @@ async function main() {
     // ---- phase 1: previous deployment state
     await runMigrator(dbPath, baseDir);
     console.log("[upgrade-test] ✓ حالت پایه (نسخهٔ قبلی) ساخته شد\n");
+
+    // Reproduce an already-deployed historical 0006 schema in disposable data.
+    if (LEGACY6) {
+      const legacy = createClient({ url: `file:${dbPath}` });
+      await legacy.executeMultiple('DROP TABLE "Reservation"; ALTER TABLE "Order" DROP COLUMN "scheduledFor";');
+      legacy.close();
+    }
 
     // ---- phase 2: seed a busy restaurant database
     const client = createClient({ url: `file:${dbPath}` });
@@ -209,7 +217,7 @@ async function main() {
 
     // ---- phase 3: snapshot digests of everything that must survive
     const before = {};
-    for (const t of PRESERVED_TABLES) {
+    for (const t of PRESERVED_TABLES.filter(t => t !== "Reservation" || hasReservations)) {
       const cols = (await columnsOf(client, t)).filter(
         (c) => !(STRUCTURAL_CHANGES.droppedColumns[t] ?? []).includes(c),
       );
@@ -226,7 +234,7 @@ async function main() {
     let failures = 0;
     const report = [];
 
-    for (const t of PRESERVED_TABLES) {
+    for (const t of PRESERVED_TABLES.filter(t => t !== "Reservation" || hasReservations)) {
       const exists = await tableExists(verify, t);
       if (!exists) {
         report.push(`✗✗✗ جدول ${t} ناپدید شده است!`);

@@ -67,12 +67,12 @@ export async function POST(req: NextRequest) {
     }
 
     // save user message
-    await db.chatMessage.create({
+    const savedUserMessage = await db.chatMessage.create({
       data: { sessionId: session.id, role: "USER", content: parsed.data.message, type: "TEXT" },
     });
 
     // process via engine
-    const result = await processChatMessage(session, user.id, parsed.data.message);
+    const result = await processChatMessage(session, user.id, parsed.data.message, savedUserMessage.id);
 
     // ---- گیت اطلاع‌رسانی ساعات کاری ----
     // خارج از ناهار/شام، پاسخ هوش نخل قطعاً شامل «رستوران بسته است» می‌شود

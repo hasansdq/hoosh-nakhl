@@ -86,12 +86,8 @@ if [ "${ZARINPAL_FORCE_REAL:-}" != "1" ]; then
   log "⚠⚠  Customers could complete orders without paying real money."
   log "⚠⚠  For production set ZARINPAL_FORCE_REAL=1 in .env (docker-compose defaults to it)."
 fi
-if [ "${NAKHL_SEED_PROFILE:-prod}" = "dev" ]; then
-  log "⚠⚠  WARNING: NAKHL_SEED_PROFILE=dev — OTP codes are exposed in API responses!"
-  log "⚠⚠  Only acceptable on a PRIVATE staging box. Production must use NAKHL_SEED_PROFILE=prod."
-fi
 if [ -n "${ADMIN_PASSWORD:-}" ]; then
-  log "note: ADMIN_PASSWORD was set through the environment — change it from the admin panel after first login, then remove it from .env"
+  log "note: ADMIN_PASSWORD does not create or change accounts during startup; bootstrap is manual"
 fi
 
 # ---------- 4. preserve all existing business data ----------------------------

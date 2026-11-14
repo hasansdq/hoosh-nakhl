@@ -51,8 +51,7 @@ services:
       NAKHL_SEED_DIR: /app/seed
       # in-process push channel (docker/app-server.js serves POST /emit)
       NAKHL_NOTIFY_URL: http://127.0.0.1:3000/emit
-      # production-safe seeding profile (dev = visible OTP, only for testing!)
-      NAKHL_SEED_PROFILE: ${NAKHL_SEED_PROFILE:-prod}
+      # No startup seeding; existing data is never supplemented with demo rows.
       # ---- payment kill-switch (.defaults ON — «پرداخت آزمایشی کاملاً غیرفعال
       # در نسخهٔ نهایی») --------------------------------------------------
       # With ZARINPAL_FORCE_REAL=1 the simulated gateway is dead at THREE

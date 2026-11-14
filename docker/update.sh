@@ -113,6 +113,10 @@ if ! nakhl_timed "تست حفظ سفارش‌ها" docker run --rm --network non
   echo  "    • بک‌آپ گام ۱ موجود است؛ لاگ بالا را بررسی و مشکل را رفع کنید"
   exit 1
 fi
+if ! nakhl_timed "تست ارتقا از نسخهٔ قبلی پروداکشن" docker run --rm --network none --tmpfs /app/data:uid=1000,gid=1000 --entrypoint node nakhl-restaurant:latest scripts/upgrade-test.mjs --legacy-6; then
+  bold "✗ تست ارتقای نسخهٔ قبلی شکست خورد — کانتینر فعلی جایگزین نشد"
+  exit 1
+fi
 ok "تست ارتقا پاس شد: سفارش‌ها/اقلام/لاگ‌ها در شبیه‌سازی سالم ماندند"
 
 if ! nakhl_timed "تست اتمی‌بودن مهاجرت" docker run --rm --network none --tmpfs /app/data:uid=1000,gid=1000 --entrypoint node nakhl-restaurant:latest scripts/migration-test.mjs; then

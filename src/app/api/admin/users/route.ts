@@ -1,4 +1,5 @@
 import { NextRequest } from "next/server";
+import { toEnglishDigits } from "@/lib/fa";
 import { db } from "@/lib/db";
 import { ok, fail, requireAdmin } from "@/lib/api";
 
@@ -10,10 +11,11 @@ export async function GET(req: NextRequest) {
     const url = new URL(req.url);
     const search = url.searchParams.get("q");
     const status = url.searchParams.get("status");
-    const page = Math.max(1, Number(url.searchParams.get("page") ?? 1));
+    const pageValue = Number(url.searchParams.get("page") ?? 1);
+    const page = Number.isSafeInteger(pageValue) && pageValue > 0 ? pageValue : 1;
     const pageSize = 15;
 
-    const digits = search?.replace(/\D/g, "") ?? "";
+    const digits = toEnglishDigits(search ?? "").replace(/\D/g, "").replace(/^(?:0098|98|0)(?=9)/, "");
     const where = {
       ...(status === "ACTIVE" || status === "BLOCKED" ? { status } : {}),
       ...(search

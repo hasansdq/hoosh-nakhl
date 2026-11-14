@@ -14,7 +14,8 @@ export async function GET(req: NextRequest) {
     const url = new URL(req.url);
     const status = url.searchParams.get("status");
     const search = url.searchParams.get("q");
-    const page = Math.max(1, Number(url.searchParams.get("page") ?? 1));
+    const pageValue = Number(url.searchParams.get("page") ?? 1);
+    const page = Number.isSafeInteger(pageValue) && pageValue > 0 ? pageValue : 1;
     const pageSize = 15;
 
     // search also matches the customer phone snapshot (exact digits) so an

@@ -507,7 +507,8 @@ async function buildTrackingPayload(userId: string): Promise<TrackingPayload | n
 export async function processChatMessage(
   session: { id: string; stage: string; draft: string | null; orderId: string | null },
   userId: string,
-  userMessage: string
+  userMessage: string,
+  currentMessageId?: string
 ): Promise<EngineResult> {
   const [aiSettings, general] = await Promise.all([
     getSettings<AISettings>("ai"),
@@ -629,7 +630,7 @@ export async function processChatMessage(
 
   // recent history
   const history = await db.chatMessage.findMany({
-    where: { sessionId: session.id },
+    where: { sessionId: session.id, ...(currentMessageId ? { id: { not: currentMessageId } } : {}) },
     orderBy: { createdAt: "desc" },
     take: Math.max(4, aiSettings.maxHistoryMessages),
   });
@@ -641,7 +642,7 @@ export async function processChatMessage(
   const completion = await chatCompletion(aiSettings, [
     { role: "system", content: systemPrompt },
     ...historyMessages,
-    ...(historyMessages.at(-1)?.role === "user" && historyMessages.at(-1)?.content === userMessage ? [] : [{ role: "user" as const, content: userMessage }]),
+    { role: "user", content: userMessage },
   ], { jsonMode: true });
 
   if (completion.success) {

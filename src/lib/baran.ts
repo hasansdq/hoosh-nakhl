@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { getSettings } from "@/lib/settings";
 import type { BaranSettings } from "@/lib/settings";
-import { saveImageUpload, deleteUploadByUrl } from "@/lib/uploads";
+import { saveImageUpload } from "@/lib/uploads";
 
 /**
  * Nakhl Restaurant — Baran accounting software integration
@@ -598,10 +598,8 @@ export async function handleSendPics(
       if (!saved.success || !saved.url) throw new Error(saved.error ?? "ذخیرهٔ تصویر ناموفق بود");
 
       // رکورد/به‌روزرسانی دارایی باران — فایل قبلی با همین نام پاک می‌شود
-      const prev = await db.baranAsset.findUnique({ where: { fileName: picName } });
-      if (prev && prev.url !== saved.url) {
-        await deleteUploadByUrl(prev.url).catch(() => false);
-      }
+      // Keep previous uploaded bytes: another menu/gallery may still reference them.
+      // Cleanup is an explicit admin action, never a side effect of image sync.
       await db.baranAsset.upsert({
         where: { fileName: picName },
         update: {
