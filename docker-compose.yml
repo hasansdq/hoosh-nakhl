@@ -35,6 +35,7 @@ services:
         NEXT_PUBLIC_SOCKET_PATH: /api/ws
     image: nakhl-restaurant:latest
     container_name: nakhl-app
+    init: true
     restart: unless-stopped
 
     # single .env at the repo root (compose reads it for BOTH variable

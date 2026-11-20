@@ -9,7 +9,8 @@
 #      (an explicit env var always wins and is persisted in its place)
 #   3. forward-only migrations (docker/migrate.mjs — transactional; explicit deletions may apply)
 #   4. no automatic seeding or account creation
-#   5. exec the Node production server (docker/app-server.js) as PID 1
+#   5. exec the Node production server; with Compose init, Node receives
+#      forwarded signals and Docker's PID 1 collects orphaned processes
 #
 # Everything in here is safe to re-run on every container start — including
 # image upgrades — while preserving existing data except for explicitly declared migration deletions.

@@ -46,14 +46,59 @@ jobs:
         run: docker run --rm --network none --entrypoint node nakhl-validation scripts/data-preservation-test.mjs
       - name: Start production app with temporary data
         run: |
-          docker volume create nakhl-validation-data
-          docker run -d --name nakhl-validation -p 127.0.0.1:8080:3000 \
-            -v nakhl-validation-data:/app/data \
-            -e NAKHL_SEED_PROFILE=prod -e ZARINPAL_FORCE_REAL=1 nakhl-validation
+          cp docker/env.example .env
+          docker compose config --format json | jq -e '
+            .name == "nakhl-restaurant" and
+            .services.app.init == true and .services.app.restart == "unless-stopped" and
+            .volumes["nakhl-data"].name == "nakhl-restaurant_nakhl-data" and
+            any(.services.app.volumes[]; .source == "nakhl-data" and .target == "/app/data")'
+          cat > "${RUNNER_TEMP}/nakhl-compose-ci.yml" <<'YAML'
+          services:
+            app:
+              image: nakhl-validation
+              container_name: nakhl-validation
+          volumes:
+            nakhl-data:
+              name: nakhl-validation-data
+          YAML
+          docker compose -p nakhl-validation -f docker-compose.yml \
+            -f "${RUNNER_TEMP}/nakhl-compose-ci.yml" up -d --no-build
           for attempt in $(seq 1 60); do
             if curl --fail --silent http://127.0.0.1:8080/api/health; then
               exit 0
             fi
+            sleep 2
+          done
+          exit 1
+      - name: Verify effective healthcheck and orphan reaping
+        run: |
+          docker image inspect nakhl-validation | jq -e '.[0].Config.Healthcheck |
+            .Timeout == 6000000000 and .StartPeriod == 60000000000 and
+            .Interval == 30000000000 and .Retries == 3 and
+            (.Test[1] | contains("AbortSignal.timeout(4000)"))'
+          docker inspect nakhl-validation | jq -e '.[0] |
+            .HostConfig.Init == true and
+            .Config.Healthcheck.Timeout == 5000000000 and
+            (.Config.Healthcheck.Test[1] | contains("AbortSignal.timeout(4000)"))'
+          docker exec nakhl-validation sh -eu -c '
+            [ "$(cat /proc/1/comm)" = docker-init ]
+            for process in /proc/[0-9]*/comm; do
+              if [ "$(cat "$process" 2>/dev/null)" = node ]; then
+                grep -Eq "^PPid:[[:space:]]+1$" "${process%/comm}/status" && break
+              fi
+            done
+            grep -Eq "^PPid:[[:space:]]+1$" "${process%/comm}/status"
+            pid=$(sh -c "sleep 2 </dev/null >/dev/null 2>&1 & echo \$!")
+            grep -Eq "^PPid:[[:space:]]+1$" "/proc/$pid/status"
+            for attempt in 1 2 3 4 5; do
+              [ -d "/proc/$pid" ] || exit 0
+              sleep 1
+            done
+            echo "Orphan $pid was not reaped" >&2
+            exit 1
+          '
+          for attempt in $(seq 1 25); do
+            [ "$(docker inspect -f '{{.State.Health.Status}}' nakhl-validation)" != healthy ] || exit 0
             sleep 2
           done
           exit 1
