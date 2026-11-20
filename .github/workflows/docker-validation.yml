@@ -19,7 +19,7 @@ jobs:
         with:
           node-version: "22"
       - name: Verify business regressions without external services
-        run: node tests/business-regressions.mjs
+        run: timeout 45s node tests/business-regressions.mjs
       - name: Verify timer and safe update failure handling
         run: python3 tests/update-progress.py
       - name: Build production image
@@ -78,7 +78,7 @@ jobs:
             (.Test[1] | contains("AbortSignal.timeout(4000)"))'
           docker inspect nakhl-validation | jq -e '.[0] |
             .HostConfig.Init == true and
-            .Config.Healthcheck.Timeout == 5000000000 and
+            .Config.Healthcheck.Timeout == 6000000000 and
             (.Config.Healthcheck.Test[1] | contains("AbortSignal.timeout(4000)"))'
           docker exec nakhl-validation sh -eu -c '
             [ "$(cat /proc/1/comm)" = docker-init ]
@@ -102,6 +102,12 @@ jobs:
             sleep 2
           done
           exit 1
+      - name: Check health and homepage under concurrent read-only traffic
+        run: |
+          seq 1 80 | xargs -P 8 -I '{}' sh -ec '
+            body=$(curl -fsS --max-time 8 http://127.0.0.1:8080/api/health)
+            echo "$body" | jq -e ".ok and (.db == \"up\")" >/dev/null
+            curl -fsS --max-time 10 http://127.0.0.1:8080/ >/dev/null'
       - name: Verify production upload routes and persistence
         run: NAKHL_UPLOAD_SMOKE=1 node tests/upload-smoke.mjs
       - name: Show logs and clean up temporary data

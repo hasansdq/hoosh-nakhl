@@ -12,6 +12,10 @@ async function load(path, deps={}) {
 }
 const fa=await load('src/lib/fa.ts');
 const parser=await load('src/lib/chat/parser.ts',fa);
+// A rejected boundary at offset zero must terminate, even if a later
+// candidate is also embedded. Keep ordinary whole-word matches unchanged.
+assert.equal(parser.includesWord('دوغ و دوغ', 'دو'), false);
+assert.equal(parser.includesWord('دو و دوغ', 'دو'), true);
 const categories=[{id:'c',name:'کباب',items:[{id:'m',name:'کباب کوبیده',price:1000,isAvailable:true,isDrink:false}]}];
 for(const text of ['قیمت کباب کوبیده چنده؟','کباب کوبیده چی داره؟','کباب کوبیده پیشنهاد میدی؟']) {
   assert.deepEqual(parser.deterministicParse(text,'ORDERING',categories,{items:[]}).actions,[],text);

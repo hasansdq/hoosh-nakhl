@@ -55,6 +55,8 @@ function lastIndexOfWord(haystack: string, needle: string): number {
     const isLetter = (c: string) => /[\u0600-\u06FF\u200c]/.test(c);
     // match must not be embedded inside a longer word (e.g. "فسنجان" inside "رفسنجان")
     if (!isLetter(before) && !isLetter(after)) return idx;
+    // lastIndexOf clamps a negative offset to zero. No earlier match exists.
+    if (idx === 0) break;
     idx = haystack.lastIndexOf(needle, idx - 1);
   }
   return -1;
