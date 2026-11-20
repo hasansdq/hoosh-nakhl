@@ -94,6 +94,27 @@ process.env.__NEXT_PRIVATE_STANDALONE_CONFIG = JSON.stringify(nextConfig);
 // HTTP server + socket.io realtime channel (path /api/ws)
 // ---------------------------------------------------------------------------
 const httpServer = createServer();
+// One aggregate sample per minute; never log URLs, IPs, order numbers or payloads.
+const { monitorEventLoopDelay, performance } = require("node:perf_hooks");
+const lag = monitorEventLoopDelay({ resolution: 50 });
+lag.enable();
+let lastCpu = process.cpuUsage();
+let lastTime = performance.now();
+let limitedJoins = 0;
+let rejectedEmits = 0;
+let socketErrors = 0;
+setInterval(() => {
+  const now = performance.now();
+  const cpu = process.cpuUsage();
+  const cpuPct = Math.round((cpu.user - lastCpu.user + cpu.system - lastCpu.system) / (10 * (now - lastTime)));
+  console.info("[runtime]", JSON.stringify({ cpuPct, lagMaxMs: Math.round(lag.max / 1e6),
+    lagP99Ms: Math.round(lag.percentile(99) / 1e6), sampleMs: Math.round(now - lastTime),
+    sockets: io.engine.clientsCount, limitedJoins, rejectedEmits, socketErrors }));
+  lastCpu = cpu;
+  lastTime = now;
+  lag.reset();
+  limitedJoins = rejectedEmits = socketErrors = 0;
+}, 60_000).unref();
 const io = new Server(httpServer, {
   path: "/api/ws",
   // same-origin deployment behind the Apache reverse proxy — no CORS needed
@@ -103,16 +124,26 @@ const io = new Server(httpServer, {
 });
 
 io.on("connection", (socket) => {
+  // Bound join work per connection only. Normal tracking, checkout and
+  // payment requests do not share a quota across users behind the proxy.
+  let credits = 60;
+  let updated = performance.now();
+  function allowJoin() {
+    const now = performance.now();
+    credits = Math.min(60, credits + (now - updated) / 1000);
+    updated = now;
+    if (credits < 1) { limitedJoins++; return false; }
+    credits--;
+    return true;
+  }
   // admin panels authenticate with the shared secret and join the "admins" room
   socket.on("admin-join", (data) => {
+    if (!allowJoin()) return;
     const key = data && typeof data === "object" ? data.key : undefined;
     if (typeof key === "string" && key === NOTIFY_KEY) {
       socket.join(ADMINS_ROOM);
       socket.emit("joined", { room: ADMINS_ROOM, at: new Date().toISOString() });
-      const online = io.sockets.adapter.rooms.get(ADMINS_ROOM)?.size ?? 0;
-      console.log(`[realtime] admin joined ${socket.id} (admins online: ${online})`);
     } else {
-      console.warn(`[realtime] rejected invalid admin key from ${socket.id}`);
       socket.emit("error: invalid key");
       socket.disconnect(true);
     }
@@ -120,6 +151,7 @@ io.on("connection", (socket) => {
 
   // customers join their own order-tracking room (semi-public order number)
   socket.on("customer-join", (data) => {
+    if (!allowJoin()) return;
     const orderNumber = data && typeof data === "object" ? data.orderNumber : undefined;
     if (
       typeof orderNumber === "string" &&
@@ -129,20 +161,14 @@ io.on("connection", (socket) => {
       const room = `customer:${orderNumber}`;
       socket.join(room);
       socket.emit("joined-customer", { orderNumber, room, at: new Date().toISOString() });
-      console.log(`[realtime] customer joined ${room}: ${socket.id}`);
     } else {
       // do NOT disconnect — the track page retries with a normalized number
       socket.emit("error: invalid order number");
     }
   });
 
-  socket.on("disconnect", (reason) => {
-    console.log(`[realtime] disconnected ${socket.id} (${reason})`);
-  });
-
-  socket.on("error", (err) => {
-    console.error(`[realtime] socket error ${socket.id}:`, err?.message ?? err);
-  });
+  // Socket.IO releases room memberships on disconnect.
+  socket.on("error", () => { socketErrors++; });
 });
 
 // ---------------------------------------------------------------------------
@@ -185,7 +211,7 @@ async function handleEmitRequest(req, res) {
     return;
   }
   if (req.headers["x-notify-key"] !== NOTIFY_KEY) {
-    console.warn("[emit] rejected: missing or invalid x-notify-key");
+    rejectedEmits++;
     sendJson(res, 401, { ok: false, error: "unauthorized" });
     return;
   }
@@ -215,7 +241,6 @@ async function handleEmitRequest(req, res) {
   }
   const recipients = io.sockets.adapter.rooms.get(targetRoom)?.size ?? 0;
   io.to(targetRoom).emit(event, payload);
-  console.log(`[emit] "${event}" → ${recipients} socket(s) in "${targetRoom}"`);
   sendJson(res, 200, { ok: true, event, recipients, room: targetRoom });
 }
 
